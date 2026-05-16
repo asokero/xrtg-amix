@@ -1,0 +1,21 @@
+#include <Server.tmpl>
+
+SRCS = rtgInit.c
+
+OBJS = rtgInit.o
+
+SUBDIRS = va2000
+
+STD_DEFINES = ServerDefines -DRTG
+CDEBUGFLAGS = -g -O
+   INCLUDES = -I. -I.. -I../../../include -I$(INCLUDESRC) \
+              -I../../mi -I../../mfb -I$(FONTSRC)/include
+
+NormalLibraryObjectRule()
+NormalLibraryTarget(rtg, $(OBJS))
+
+DependTarget()
+
+#define IHaveSubdirs
+MakeSubdirs($(SUBDIRS))
+DependSubdirs($(SUBDIRS))

@@ -1,0 +1,70 @@
+/* $XConsortium: sv4Lib.rules,v 1.8 91/07/19 15:38:53 rws Exp $ */
+
+/*
+ * SVR4 shared library rules for AMIX.
+ *
+ * amix.cf does not define HasSharedLibraries, so DoSharedLib is NO
+ * and none of these rules are invoked during the server build.
+ * They are defined here to satisfy the #include and to override the
+ * generic defaults in Imake.rules where SVR4 behavior differs.
+ */
+
+#ifndef SharedLibraryObjectRule
+#define SharedLibraryObjectRule()					@@\
+.c.o:									@@\
+	$(CC) -c $(CFLAGS) $(PICFLAGS) $*.c				@@\
+									@@\
+install.ln::
+#endif /* SharedLibraryObjectRule */
+
+#ifndef SpecialSharedObjectRule
+#define SpecialSharedObjectRule(objs,depends,options)			@@\
+objs: depends								@@\
+	$(CC) -c $(CFLAGS) $(PICFLAGS) options $*.c
+#endif /* SpecialSharedObjectRule */
+
+#ifndef NormalSharedLibraryTarget
+#define NormalSharedLibraryTarget(libname,rev,solist,down,up)		@@\
+AllTarget(Concat(lib,libname.so.rev))					@@\
+Concat(lib,libname.so.rev): solist					@@\
+	$(RM) $@							@@\
+	down								@@\
+	$(CC) -G -o $@ solist $(SHLIBLDFLAGS)				@@\
+	up								@@\
+	$(LN) $@ Concat(lib,libname.so)					@@\
+									@@\
+clean::									@@\
+	$(RM) Concat(lib,libname.so.rev) Concat(lib,libname.so)
+#endif /* NormalSharedLibraryTarget */
+
+#ifndef NormalSharedLibraryDataTarget
+#define NormalSharedLibraryDataTarget(libname,rev,rotlist)		@@\
+AllTarget(Concat(lib,libname.so.rev))					@@\
+Concat(lib,libname.so.rev): rotlist					@@\
+	$(RM) $@							@@\
+	$(LD) -o $@ rotlist $(SHLIBLDFLAGS)				@@\
+	$(LN) $@ Concat(lib,libname.so)					@@\
+									@@\
+clean::									@@\
+	$(RM) Concat(lib,libname.so.rev) Concat(lib,libname.so)
+#endif /* NormalSharedLibraryDataTarget */
+
+#ifndef InstallSharedLibrary
+#define InstallSharedLibrary(libname,rev,dest)				@@\
+install.shared::							@@\
+	$(INSTALL) $(INSTALLFLAGS) $(INSTALLLIBFLAGS)			@@\
+		Concat(lib,libname.so.rev) dest				@@\
+	$(RM) Concat(dest/lib,libname.so)				@@\
+	$(LN) Concat(lib,libname.so.rev)				@@\
+		Concat(dest/lib,libname.so)
+#endif /* InstallSharedLibrary */
+
+#ifndef InstallSharedLibraryData
+#define InstallSharedLibraryData(libname,rev,dest)			@@\
+install.shared::							@@\
+	$(INSTALL) $(INSTALLFLAGS) $(INSTALLLIBFLAGS)			@@\
+		Concat(lib,libname.so.rev) dest				@@\
+	$(RM) Concat(dest/lib,libname.so)				@@\
+	$(LN) Concat(lib,libname.so.rev)				@@\
+		Concat(dest/lib,libname.so)
+#endif /* InstallSharedLibraryData */

@@ -1,0 +1,39 @@
+XCOMM $XConsortium: Imakefile,v 5.13 91/07/29 18:26:59 rws Exp $
+#include <Server.tmpl>
+
+SRCS =	amixInit.c amixMono.c amixCursor.c amixIo.c amixKbd.c amixMouse.c \
+	amixKeyMap.c
+
+OFILES = amixInit.o amixInitExtMono.o amixInitExtDMI.o amixTstub.o
+
+OBJS = 	amixMono.o amixCursor.o amixIo.o amixKbd.o amixMouse.o \
+	amixKeyMap.o
+
+   INCLUDES = -I. -I../mfb -I../mi -I../../include\
+   		-I$(INCLUDESRC) -I$(FONTSRC)/include
+
+#ifdef RTG
+   RTGDIRS = rtg
+#endif
+   SUBDIRS = $(RTGDIRS)
+
+NormalLibraryObjectRule()
+
+all:: $(OFILES)
+
+lintlib:
+
+NormalLibraryTarget(amix,$(OBJS))
+
+amixInitExtMono.o: $(ICONFIGFILES)
+amixInitExtDMI.o: $(ICONFIGFILES)
+ObjectFromSpecialSource(amixInitExtMono,../mi/miinitext,-UPEXEXT)
+ObjectFromSpecialSource(amixInitExtDMI,../mi/miinitext,-UPEXEXT)
+
+InstallManPage(Xamix,$(MANDIR))
+
+#ifdef RTG
+#define IHaveSubdirs
+MakeSubdirs($(SUBDIRS))
+DependSubdirs($(SUBDIRS))
+#endif

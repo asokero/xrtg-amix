@@ -1,0 +1,49 @@
+XCOMM port: This port of X11R5 was done by Keith Gabryelski and is
+XCOMM port: public domain.
+
+#define	OSMajorVersion 4
+#define	OSMinorVersion 0
+#define	OSName AT&T Unix System V Release 4.0
+#define OSDefines -DAMIX -Dm68k
+#define OSRelease -DSVR4
+#define OSVendor "Commodore-Amiga"
+
+XCOMM operating system:  OSName OSVendor
+
+#define SystemV4			YES
+
+#define BootstrapCFlags OSDefines OSRelease
+#define StandardDefines OSDefines OSRelease
+
+#define XamixServer			NO
+#define XamixDMIServer			NO
+#define XamixRTGServer			YES
+#define BuildPex			NO
+#define BuildPexExt			NO
+#define DDXServerDefines		-DRTG -DVA2000
+
+#define InstallXdmConfig		YES
+#define XdmConfigurationSubdirectory config-amix
+
+#define ConnectionFlags	-DTCPCONN -DUNIXCONN
+#define HasSecureRPC			NO
+#define HasSockets			YES
+#define NeedBerklib			YES
+#define SocketLibraries	-lsocket -lnsl
+#define HasPutenv			YES
+#define StripInstalledPrograms		YES
+
+#define HasGcc				YES
+#define GccOptions -ansi -finline-functions -fcombine-regs DDXServerDefines
+#define ServerCcCmd gcc GccOptions
+#define CcCmd gcc GccOptions
+#define	CppCmd /usr/public/lib/gcc-cpp
+
+#ifdef HasGcc
+#define PositionIndependentCFlags -fpic
+#define SharedLibraryLoadFlags -G
+#endif
+
+#include <amix.rules>
+
+#include <sv4Lib.rules>

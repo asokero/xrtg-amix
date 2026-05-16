@@ -1,0 +1,17 @@
+#include <Server.tmpl>
+
+SRCS = va2000hw.c va2000screen.c va2000draw.c va2000win.c \
+       va2000cmap.c va2000pix.c va2000cursor.c
+
+OBJS = va2000hw.o va2000screen.o va2000draw.o va2000win.o \
+       va2000cmap.o va2000pix.o va2000cursor.o
+
+STD_DEFINES = ServerDefines -DRTG -DVA2000
+CDEBUGFLAGS = -g -O
+   INCLUDES = -I. -I.. -I../.. -I../../../../include -I$(INCLUDESRC) \
+              -I../../../mi -I../../../mfb -I$(FONTSRC)/include
+
+NormalLibraryObjectRule()
+NormalLibraryTarget(va2000, $(OBJS))
+
+DependTarget()

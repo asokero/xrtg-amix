@@ -1,0 +1,30 @@
+/* AMIX-specific imake rules for X11R5 */
+/* Port: Keith Gabryelski, public domain. */
+
+/*
+ * NormalLibraryTarget - AMIX SVR4 ar maintains the symbol table with ar cq.
+ * DoRanlibCmd is 0 on SystemV4, so RANLIB is undefined in generated Makefiles.
+ * The $(RANLIB) call in the default macro expands to a bare filename which the
+ * shell tries to execute, causing the build to fail.  Remove it here so that
+ * the #ifndef guard in Imake.rules keeps this version.
+ */
+#ifndef NormalLibraryTarget
+#define NormalLibraryTarget(libname,objlist)				@@\
+AllTarget(lib/**/libname.a)						@@\
+									@@\
+lib/**/libname.a: objlist						@@\
+	$(RM) $@							@@\
+	$(AR) $@ objlist
+#endif /* NormalLibraryTarget */
+
+/*
+ * NormalLibraryTarget2 - same fix as NormalLibraryTarget.
+ */
+#ifndef NormalLibraryTarget2
+#define NormalLibraryTarget2(libname,objlist1,objlist2)			@@\
+AllTarget(lib/**/libname.a)						@@\
+									@@\
+lib/**/libname.a: objlist1 objlist2					@@\
+	$(RM) $@							@@\
+	$(AR) $@ objlist1 objlist2
+#endif /* NormalLibraryTarget2 */
