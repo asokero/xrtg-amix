@@ -37,28 +37,45 @@
 /* = Hardware registers (byte offsets from mmap base)                   = */
 /* ======================================================================= */
 
-/* Screen geometry — written before activating RTG mode */
-#define VA2000_REG_WIDTH        0x06    /* display width  in pixels         */
-#define VA2000_REG_HEIGHT       0x08    /* display height in pixels         */
-#define VA2000_REG_UNKNOWN_0E   0x0e    /* set to 1 during init             */
-#define VA2000_REG_PITCH        0x58    /* framebuffer pitch in pixels      */
+/* Display controller registers (names from va2000_test.c) */
+#define VA2000_REG_SCALEMODE     0x04   /* scale mode (0=normal)            */
+#define VA2000_REG_WIDTH         0x06   /* display width in pixels          */
+#define VA2000_REG_HEIGHT        0x08   /* display height in pixels         */
+#define VA2000_REG_COLORMODE     0x0e   /* color mode                       */
+#define VA2000_COLORMODE_16BIT   1      /* RGB565                           */
+#define VA2000_REG_SAFE_X2       0x14   /* display timing (0x1e0)           */
+#define VA2000_REG_RAM_FETCH     0x18   /* RAM fetch timing (0x17)          */
+#define VA2000_REG_FETCH_PREROLL 0x1a   /* fetch preroll (0x1e0)            */
+#define VA2000_REG_PAN_HI        0x38   /* display start address high word  */
+#define VA2000_REG_PAN_LO        0x3a   /* display start address low word   */
+
+/* Pan values: RTG points to framebuffer[0]; passthrough to Amiga video area */
+#define VA2000_PAN_RTG_HI        0
+#define VA2000_PAN_RTG_LO        0
+#define VA2000_PAN_PASSTHRU_HI   0xf8
+#define VA2000_PAN_PASSTHRU_LO   0
 
 /* Capture / RTG mode select */
-#define VA2000_REG_CAPTURE      0x4e    /* 0=RTG active, 1=passthrough      */
-#define VA2000_CAPTURE_RTG      0
-#define VA2000_CAPTURE_PASSTHRU 1
+#define VA2000_REG_CAPTURE       0x4e   /* 0=RTG active, 1=passthrough      */
+#define VA2000_CAPTURE_RTG       0
+#define VA2000_CAPTURE_PASSTHRU  1
 
-/* Modeline registers — horizontal timing */
-#define VA2000_REG_HTOTAL       0x70    /* horizontal total                 */
-#define VA2000_REG_HSYNC_START  0x72    /* horizontal sync start            */
-#define VA2000_REG_HSYNC_END    0x74    /* horizontal sync end              */
+#define VA2000_REG_PITCH         0x58   /* framebuffer pitch in pixels      */
+#define VA2000_REG_PITCH_SHF     0x5c   /* pitch shift (9)                  */
 
-/* Modeline registers — vertical timing */
-#define VA2000_REG_VTOTAL       0x76    /* vertical total                   */
-#define VA2000_REG_VSYNC_START  0x78    /* vertical sync start              */
-#define VA2000_REG_VSYNC_END    0x7a    /* vertical sync end                */
+/* Modeline registers */
+#define VA2000_REG_HTOTAL        0x70   /* H sync start                     */
+#define VA2000_REG_HSYNC_START   0x72   /* H sync end                       */
+#define VA2000_REG_HSYNC_END     0x74   /* H max                            */
+#define VA2000_REG_VTOTAL        0x76   /* V sync start                     */
+#define VA2000_REG_VSYNC_START   0x78   /* V sync end                       */
+#define VA2000_REG_VSYNC_END     0x7a   /* V max                            */
+#define VA2000_REG_PIX_CLK       0x7c   /* pixel clock                      */
 
-#define VA2000_REG_UNKNOWN_7C   0x7c    /* set to 1 during init             */
+/* Passthrough mode geometry (native Amiga video: 640x480) */
+#define VA2000_PASSTHRU_WIDTH    640
+#define VA2000_PASSTHRU_HEIGHT   480
+#define VA2000_PASSTHRU_PITCH    320    /* pitch in pixels (640px / 2)      */
 
 /* ======================================================================= */
 /* = Default modeline values for 800x600                                = */
@@ -136,6 +153,7 @@ void    va2000CloseHW();
 /* va2000screen.c — screen lifecycle and GC */
 Bool    va2000ScreenInit();
 Bool    va2000CloseScreen();
+void    va2000DrawGuarantee();
 Bool    va2000CreateGC();
 void    va2000ValidateGC();
 void    va2000DestroyGC();
@@ -145,6 +163,7 @@ void    va2000DestroyClip();
 void    va2000QueryBestSize();
 
 /* va2000draw.c — drawing primitives */
+void    va2000GetImage();
 void    va2000FillSpans();
 void    va2000SetSpans();
 void    va2000GetSpans();

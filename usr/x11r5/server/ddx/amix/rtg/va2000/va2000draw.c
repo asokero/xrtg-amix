@@ -111,6 +111,25 @@ int             w;
 }
 
 /* ---------------------------------------------------------------------- */
+/* va2000GetImage — tracing wrapper for miGetImage                        */
+
+extern void miGetImage();
+extern void mfbGetSpans();
+
+void
+va2000GetImage(pDraw, sx, sy, w, h, format, planeMask, pdstLine)
+DrawablePtr    pDraw;
+int            sx, sy, w, h;
+unsigned int   format;
+unsigned long  planeMask;
+pointer        pdstLine;
+{
+    ErrorF("va2000GetImage: pDraw=%p pDraw->pScreen=%p type=%d\n",
+           pDraw, pDraw->pScreen, pDraw->type);
+    miGetImage(pDraw, sx, sy, w, h, format, planeMask, pdstLine);
+}
+
+/* ---------------------------------------------------------------------- */
 /* va2000FillSpans                                                         */
 
 /*
@@ -229,11 +248,22 @@ int           *pwidth;
 int            nspans;
 unsigned long *pdstStart;
 {
-    rtgScreenPtr    pRTG   = GetRTGScreen(pDraw->pScreen);
-    unsigned short *base   = drawBase(pDraw, pRTG);
-    int             stride = drawStride(pDraw);
-    unsigned short *dst    = (unsigned short *) pdstStart;
+    rtgScreenPtr    pRTG;
+    unsigned short *base;
+    int             stride;
+    unsigned short *dst;
     int             i, w;
+
+    if (pDraw->depth == 1)
+    {
+        mfbGetSpans(pDraw, wMax, ppt, pwidth, nspans, pdstStart);
+        return;
+    }
+
+    pRTG   = GetRTGScreen(pDraw->pScreen);
+    base   = drawBase(pDraw, pRTG);
+    stride = drawStride(pDraw);
+    dst    = (unsigned short *) pdstStart;
 
     for (i = 0; i < nspans; i++, ppt++, pwidth++)
     {
@@ -329,6 +359,8 @@ int       what;
     BoxPtr          pbox;
     int             nbox;
     int             x, y, w, h;
+
+    ErrorF("va2000PaintWindow: what=%d fbBase=%p\n", what, pRTG ? pRTG->fbBase : 0);
 
     if (what == PW_BACKGROUND)
     {

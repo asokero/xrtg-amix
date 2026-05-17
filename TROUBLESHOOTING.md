@@ -253,6 +253,36 @@ Expected: `X11 -> include`
 
 ---
 
+## 10. `whitePixel = 0` — cursor invisible, white text appears as black
+
+**Problem:** X starts and the VA2000 display activates, but the X cursor is
+invisible against the white root background, and text in window title bars or
+terminals appears black on black.
+
+**Cause:** `va2000ResolveColor` computed the quantised colour value using
+`unsigned short` arithmetic. The intermediate product `255 * 65535 = 16711425`
+overflows a 16-bit unsigned short to 65281. The DIX `FindBestPixel` routine
+then looks for the nearest entry to 65281 in the colour table; the closest is
+index 0 (value 0). `AllocColor` returns pixel 0 for `ones = 0xFFFF`, so
+`whitePixel = 0 = blackPixel`.
+
+**Solution:** The two-step formula avoids the overflow by using `unsigned int`
+throughout:
+
+```c
+idx    = ((unsigned int)*pRed   * (limr + 1)) >> 16;
+*pRed  = (unsigned short)((idx * 65535) / limr);
+```
+
+The current `va2000cmap.c` contains this fix. If you built from an older
+source version, re-run `install-sources.sh` and rebuild:
+
+```sh
+cd /usr/x11r5/server && make Xrtg
+```
+
+---
+
 ## 9. Build fails referencing `Xdmcp.h` with `don't know how to make` error
 
 **Problem:** `make depend` writes bare `Xdmcp.h` into dependency files,

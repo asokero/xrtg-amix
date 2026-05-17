@@ -29,6 +29,24 @@ Bool
 va2000CreateColormap(pMap)
 ColormapPtr pMap;
 {
+    VisualPtr pVisual = pMap->pVisual;
+    int       i, n;
+
+    if (pVisual->class != TrueColor && pVisual->class != DirectColor)
+        return TRUE;
+
+    n = (pVisual->redMask   >> pVisual->offsetRed)   + 1;
+    for (i = 0; i < n; i++)
+        pMap->red[i].co.local.red     = (i * 65535) / (n - 1);
+
+    n = (pVisual->greenMask >> pVisual->offsetGreen) + 1;
+    for (i = 0; i < n; i++)
+        pMap->green[i].co.local.green = (i * 65535) / (n - 1);
+
+    n = (pVisual->blueMask  >> pVisual->offsetBlue)  + 1;
+    for (i = 0; i < n; i++)
+        pMap->blue[i].co.local.blue   = (i * 65535) / (n - 1);
+
     return TRUE;
 }
 
@@ -125,32 +143,29 @@ xColorItem *pdefs;
 ** (5 for red and blue, 6 for green) then expand back to 16 bits so that
 ** the DIX pixel value reflects exactly what the hardware will display.
 **
-** The formula is the cfbResolveColor TrueColor branch, which works for
-** any TrueColor visual regardless of field widths.
+** Two-step: find the hardware index (0..lim), then reconstruct the
+** exact 16-bit value that index maps to in the colour table.  This
+** avoids the unsigned-short overflow that plagued the earlier formula.
 */
 void
 va2000ResolveColor(pRed, pGreen, pBlue, pVisual)
 unsigned short *pRed, *pGreen, *pBlue;
 VisualPtr       pVisual;
 {
-    unsigned int limr, limg, limb, lim;
-    int          shift;
+    unsigned int limr, limg, limb, idx;
 
-    limr  = pVisual->redMask   >> pVisual->offsetRed;
-    limg  = pVisual->greenMask >> pVisual->offsetGreen;
-    limb  = pVisual->blueMask  >> pVisual->offsetBlue;
-    shift = 16 - pVisual->bitsPerRGBValue;
-    lim   = (1 << pVisual->bitsPerRGBValue) - 1;
+    limr = pVisual->redMask   >> pVisual->offsetRed;
+    limg = pVisual->greenMask >> pVisual->offsetGreen;
+    limb = pVisual->blueMask  >> pVisual->offsetBlue;
 
-    *pRed   = (unsigned short)
-        ((((((*pRed   * (limr + 1)) >> 16) * 65535) / limr) >> shift)
-         * 65535) / lim;
-    *pGreen = (unsigned short)
-        ((((((*pGreen * (limg + 1)) >> 16) * 65535) / limg) >> shift)
-         * 65535) / lim;
-    *pBlue  = (unsigned short)
-        ((((((*pBlue  * (limb + 1)) >> 16) * 65535) / limb) >> shift)
-         * 65535) / lim;
+    idx    = ((unsigned int)*pRed   * (limr + 1)) >> 16;
+    *pRed  = (unsigned short)((idx * 65535) / limr);
+
+    idx    = ((unsigned int)*pGreen * (limg + 1)) >> 16;
+    *pGreen = (unsigned short)((idx * 65535) / limg);
+
+    idx    = ((unsigned int)*pBlue  * (limb + 1)) >> 16;
+    *pBlue  = (unsigned short)((idx * 65535) / limb);
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,6 +189,7 @@ ScreenPtr pScreen;
     unsigned short  zero = 0, ones = 0xFFFF;
     VisualPtr       pVisual;
     ColormapPtr     cmap;
+    Pixel           whitePix, blackPix;
 
     for (pVisual = pScreen->visuals;
          pVisual->vid != pScreen->rootVisual;
@@ -184,11 +200,14 @@ ScreenPtr pScreen;
                        AllocNone, 0) != Success)
         return FALSE;
 
-    if (AllocColor(cmap, &ones, &ones, &ones,
-                   &pScreen->whitePixel, 0) != Success ||
-        AllocColor(cmap, &zero, &zero, &zero,
-                   &pScreen->blackPixel, 0) != Success)
+    if (AllocColor(cmap, &ones, &ones, &ones, &whitePix, 0) != Success)
         return FALSE;
+
+    if (AllocColor(cmap, &zero, &zero, &zero, &blackPix, 0) != Success)
+        return FALSE;
+
+    pScreen->whitePixel = whitePix;
+    pScreen->blackPixel = blackPix;
 
     (*pScreen->InstallColormap)(cmap);
     return TRUE;

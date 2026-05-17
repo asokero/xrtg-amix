@@ -48,6 +48,12 @@ extern Bool va2000CreateDefColormap();
 /* mfb — needed to initialise depth-1 GC private storage */
 extern Bool mfbAllocatePrivates();
 
+/* input device globals from amixKbd.c / amixMouse.c / amixMono.c */
+extern KbPrivRec  sysKbPriv;
+extern PtrPrivRec sysMousePriv;
+extern int        amixCurrentScreenIndex;
+extern struct scrtype DefaultScrType;
+
 /* ------------------------------------------------------------------ */
 /* Globals defined here, declared extern in rtg.h                     */
 
@@ -64,6 +70,24 @@ static DepthRec  rtgDepth;
 static unsigned long rtgGeneration = 0;
 
 /* ------------------------------------------------------------------ */
+
+/*
+** rtgWakeupHandler — fallback no-op wakeup handler.
+**
+** Used only when rtgProbe() failed to open the AMIX screen device
+** (no input available).  amixWakeupHandler calls amixFindInputScreen
+** which does FD_ISSET(amixFbs[nscreen].fd, pReadmask); with fd=-1
+** that is undefined behaviour and crashes on m68k SVR4.
+*/
+static void
+rtgWakeupHandler(nscreen, pbdata, err, pReadmask)
+int           nscreen;
+pointer       pbdata;
+unsigned long err;
+pointer       pReadmask;
+{
+    (void)nscreen; (void)pbdata; (void)err; (void)pReadmask;
+}
 
 static Bool
 rtgSaveScreen(pScreen, on)
@@ -85,10 +109,19 @@ ScreenPtr pScreen;
 {
     rtgScreenPtr pRTG = GetRTGScreen(pScreen);
     Bool         ret;
+    int          i = pScreen->myNum;
 
     pScreen->CloseScreen = pRTG->CloseScreen;
     ret = (*pScreen->CloseScreen)(index, pScreen);
     (*pScreen->SaveScreen)(pScreen, SCREEN_SAVER_OFF);
+
+    if (amixFbs[i].mapped && amixFbs[i].fd >= 0)
+    {
+        if (CloseScreen(amixFbs[i].fd))
+            ErrorF("rtgCloseScreen: CloseScreen(%d) failed\n", amixFbs[i].fd);
+        amixFbs[i].fd     = -1;
+        amixFbs[i].mapped = FALSE;
+    }
 
     va2000CloseHW(pRTG);
     xfree((pointer) pRTG);
@@ -187,9 +220,10 @@ char    **argv;
     pScreen->CloseScreen = rtgCloseScreen;
     pScreen->SaveScreen  = rtgSaveScreen;
 
-    /* Autorepeat handlers */
+    /* Autorepeat handlers; use real amixWakeupHandler when input fd is open */
     pScreen->BlockHandler  = amixBlockHandler;
-    pScreen->WakeupHandler = amixWakeupHandler;
+    pScreen->WakeupHandler = amixFbs[index].mapped
+                             ? amixWakeupHandler : rtgWakeupHandler;
     pScreen->blockData     = (pointer) NULL;
     pScreen->wakeupData    = (pointer) NULL;
 
@@ -222,16 +256,23 @@ char    **argv;
 ** rtgProbe — probeProc entry in amixFbData[].
 **
 ** Called by InitOutput() to verify an RTG card is accessible.
-** Fills in the amixFbs[index] entry with screen geometry so that
-** the create phase can proceed.
+** Fills in the amixFbs[index] entry with geometry and opens the
+** AMIX screen device for keyboard/mouse input.
 **
-** Input handling note: unlike the TIGA path which calls amixMonoProbe()
-** to open the native AMIX screen device and thereby obtain keyboard and
-** mouse file descriptors, RTG relies on the Amiga's native input
-** hardware exposed via the screen device at amixFbs[index].fd.  For now
-** the caller (a modified InitOutput or a -rtg command-line option) is
-** responsible for ensuring amixFbs[index].fd is valid before drawing
-** begins.  amixFbs[index].fd = -1 is set here as a safe sentinel.
+** Input strategy — same as amixMonoProbe but without NewBitmap:
+**   OpenScreen()     — allocate an AMIX screen context; returns event fd
+**   DisplayScreen()  — make our context active; AMIX routes input here
+**   SIOCSETINPUTMODE — request raw keycodes from the keyboard
+**
+** DisplayScreen does not affect VA2000 VRAM output (the card reads its
+** own framebuffer directly).  It only tells the AMIX event system which
+** screen context is "front" so keyboard and mouse events are delivered
+** to our fd.  This is confirmed by Klaus Burkert's Xsvga which follows
+** the same OpenScreen/DisplayScreen path for input while driving the
+** SVGA card through a separate /dev/svga* device.
+**
+** If OpenScreen fails the server starts without input (display-only).
+** amixFbs[index].mapped = FALSE keeps amixFindInputScreen safe.
 */
 Bool
 rtgProbe(pScreenInfo, index, fbNum, argc, argv)
@@ -241,6 +282,10 @@ int         fbNum;
 int         argc;
 char      **argv;
 {
+    extern char *display;
+    char screenname[1024];
+    int  fd;
+
     ErrorF("rtgProbe: index=%d\n", index);
 
     if (!va2000Probe())
@@ -249,8 +294,48 @@ char      **argv;
         return FALSE;
     }
 
-    amixFbs[index].mapped    = TRUE;
-    amixFbs[index].fd        = -1;       /* input fd: see note above        */
+    /* Open the AMIX screen device for input events */
+    if (amixFbs[index].scrtype.dispz == 0)
+        amixFbs[index].scrtype = DefaultScrType;
+
+    if (sprintf(screenname, "Xrtg :%s.%d", display, index) < 0)
+        fd = OpenScreen("Xrtg", &amixFbs[index].scrtype, 0);
+    else
+        fd = OpenScreen(screenname, &amixFbs[index].scrtype, 0);
+
+    if (fd < 0)
+    {
+        ErrorF("rtgProbe: OpenScreen failed (%s); starting display-only\n",
+               ScreenError());
+        amixFbs[index].fd     = -1;
+        amixFbs[index].mapped = FALSE;
+    }
+    else
+    {
+        if (fcntl(fd, F_SETFL, O_NDELAY) == -1)
+            ErrorF("rtgProbe: F_SETFL O_NDELAY failed (%s)\n",
+                   strerror(errno));
+
+        if (DisplayScreen(fd))
+            ErrorF("rtgProbe: DisplayScreen failed (%s)\n", ScreenError());
+
+        if (ioctl(fd, SIOCSETINPUTMODE, SIM_RAWKEY))
+            ErrorF("rtgProbe: SIOCSETINPUTMODE SIM_RAWKEY failed (%s)\n",
+                   strerror(errno));
+
+        amixFbs[index].fd     = fd;
+        amixFbs[index].mapped = TRUE;
+        amixFbs[index].group  = ioctl(fd, SIOCGETGROUP, 0);
+
+        /* Wire keyboard and mouse private fds — both read from the same fd */
+        sysKbPriv.fd           = fd;
+        sysMousePriv.fd        = fd;
+        amixCurrentScreenIndex = index;
+
+        ErrorF("rtgProbe: input fd=%d group=%d\n",
+               fd, amixFbs[index].group);
+    }
+
     amixFbs[index].bp.width  = VA2000_WIDTH;
     amixFbs[index].bp.height = VA2000_HEIGHT;
 

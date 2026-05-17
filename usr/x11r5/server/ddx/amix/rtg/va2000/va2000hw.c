@@ -9,21 +9,14 @@
 **                        and fill in the rtgScreenRec and va2000ScreenRec.
 **   va2000CloseHW()    — restore passthrough, munmap, close.
 **
-** The register sequence written by va2000InitHW() is the exact sequence
-** verified working in blit_test3:
-**
-**   REG(0x70)=840   HTOTAL
-**   REG(0x72)=968   HSYNC_START
-**   REG(0x74)=1056  HSYNC_END
-**   REG(0x76)=601   VTOTAL
-**   REG(0x78)=605   VSYNC_START
-**   REG(0x7a)=628   VSYNC_END
-**   REG(0x7c)=1
-**   REG(0x0e)=1
-**   REG(0x58)=800   PITCH (in pixels)
-**   REG(0x06)=800   WIDTH
-**   REG(0x08)=600   HEIGHT
-**   REG(0x4e)=0     CAPTURE = RTG active
+** Register sequence is derived from va2000_test.c (va2000-amix-main).
+** Critical registers that were previously missing:
+**   0x38/0x3a  Pan pointer — must be zeroed for RTG; left at 0xf8/0x00
+**              in passthrough mode.  Without this, the display reads from
+**              the wrong part of VRAM despite correct framebuffer writes.
+**   0x5c       Pitch shift
+**   0x04       Scale mode
+**   0x14/0x18/0x1a  Display timing registers
 */
 
 #include <sys/types.h>
@@ -96,25 +89,41 @@ rtgScreenPtr pRTG;
     }
 
     /*
-    ** Write mode registers — order matches blit_test3 working sequence.
-    ** Horizontal timing first, then vertical, then geometry, then capture.
+    ** Write mode registers — sequence from va2000_test.c.
     */
-    VA2000_WRITEREG(base, VA2000_REG_HTOTAL,      VA2000_ML_HTOTAL);
+    VA2000_WRITEREG(base, VA2000_REG_HTOTAL,       VA2000_ML_HTOTAL);
     VA2000_WRITEREG(base, VA2000_REG_HSYNC_START,  VA2000_ML_HSYNC_START);
     VA2000_WRITEREG(base, VA2000_REG_HSYNC_END,    VA2000_ML_HSYNC_END);
     VA2000_WRITEREG(base, VA2000_REG_VTOTAL,       VA2000_ML_VTOTAL);
     VA2000_WRITEREG(base, VA2000_REG_VSYNC_START,  VA2000_ML_VSYNC_START);
     VA2000_WRITEREG(base, VA2000_REG_VSYNC_END,    VA2000_ML_VSYNC_END);
-    VA2000_WRITEREG(base, VA2000_REG_UNKNOWN_7C,   1);
-    VA2000_WRITEREG(base, VA2000_REG_UNKNOWN_0E,   1);
+    VA2000_WRITEREG(base, VA2000_REG_PIX_CLK,      1);
+    VA2000_WRITEREG(base, VA2000_REG_COLORMODE,    VA2000_COLORMODE_16BIT);
     VA2000_WRITEREG(base, VA2000_REG_PITCH,        VA2000_WIDTH);
+    VA2000_WRITEREG(base, VA2000_REG_PITCH_SHF,    9);
     VA2000_WRITEREG(base, VA2000_REG_WIDTH,        VA2000_WIDTH);
     VA2000_WRITEREG(base, VA2000_REG_HEIGHT,       VA2000_HEIGHT);
+    VA2000_WRITEREG(base, VA2000_REG_SCALEMODE,    0);
+    VA2000_WRITEREG(base, VA2000_REG_SAFE_X2,      0x1e0);
+    VA2000_WRITEREG(base, VA2000_REG_RAM_FETCH,    0x17);
+    VA2000_WRITEREG(base, VA2000_REG_FETCH_PREROLL,0x1e0);
+    VA2000_WRITEREG(base, VA2000_REG_PAN_HI,       VA2000_PAN_RTG_HI);
+    VA2000_WRITEREG(base, VA2000_REG_PAN_LO,       VA2000_PAN_RTG_LO);
     VA2000_WRITEREG(base, VA2000_REG_CAPTURE,      VA2000_CAPTURE_RTG);
+    /* Second modeline write clears display glitches (from va2000_blit.c) */
+    VA2000_WRITEREG(base, VA2000_REG_HTOTAL,       VA2000_ML_HTOTAL);
+    VA2000_WRITEREG(base, VA2000_REG_HSYNC_START,  VA2000_ML_HSYNC_START);
+    VA2000_WRITEREG(base, VA2000_REG_HSYNC_END,    VA2000_ML_HSYNC_END);
+    VA2000_WRITEREG(base, VA2000_REG_VTOTAL,       VA2000_ML_VTOTAL);
+    VA2000_WRITEREG(base, VA2000_REG_VSYNC_START,  VA2000_ML_VSYNC_START);
+    VA2000_WRITEREG(base, VA2000_REG_VSYNC_END,    VA2000_ML_VSYNC_END);
 
     pVA->fd      = fd;
     pVA->regBase = (pointer) base;
     pVA->fbBase  = (unsigned short *)(base + VA2000_FB_OFFSET);
+
+    /* Clear framebuffer to black so root window starts clean */
+    memset(pVA->fbBase, 0, VA2000_HEIGHT * VA2000_PITCH);
 
     pRTG->frameBase   = (pointer) base;
     pRTG->fbBase      = pVA->fbBase;
@@ -140,7 +149,23 @@ rtgScreenPtr pRTG;
     if (!pVA)
         return;
 
-    VA2000_WRITEREG(pVA->regBase, VA2000_REG_CAPTURE, VA2000_CAPTURE_PASSTHRU);
+    /* Restore passthrough — full sequence from va2000_test.c */
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_PAN_HI,       VA2000_PAN_PASSTHRU_HI);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_PAN_LO,       VA2000_PAN_PASSTHRU_LO);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_HTOTAL,       VA2000_ML_HTOTAL);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_HSYNC_START,  VA2000_ML_HSYNC_START);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_HSYNC_END,    VA2000_ML_HSYNC_END);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_VTOTAL,       VA2000_ML_VTOTAL);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_VSYNC_START,  VA2000_ML_VSYNC_START);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_VSYNC_END,    VA2000_ML_VSYNC_END);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_PIX_CLK,      1);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_COLORMODE,    VA2000_COLORMODE_16BIT);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_PITCH,        VA2000_PASSTHRU_PITCH);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_PITCH_SHF,    9);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_WIDTH,        VA2000_PASSTHRU_WIDTH);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_HEIGHT,       VA2000_PASSTHRU_HEIGHT);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_SCALEMODE,    0);
+    VA2000_WRITEREG(pVA->regBase, VA2000_REG_CAPTURE,      VA2000_CAPTURE_PASSTHRU);
 
     (void) munmap(pVA->regBase, VA2000_MMAP_SIZE);
     (void) close(pVA->fd);

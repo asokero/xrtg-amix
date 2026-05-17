@@ -116,7 +116,8 @@ InitOutput(pScreenInfo, argc, argv)
     int     	  argc;
     char    	  **argv;
 {
-    int     	  i, n, dev;
+    int     	  i, dev;
+    static int    n = 0;        /* screen count; static so server reset works */
     static int	  setup_on_exit = 0;
 
     pScreenInfo->imageByteOrder = IMAGE_BYTE_ORDER;
@@ -167,6 +168,8 @@ InitOutput(pScreenInfo, argc, argv)
 
     amixInitCursor();
 
+    ErrorF("InitOutput: done, n=%d\n", n);
+
     signal(SIGWINCH, SIG_IGN);
 }
 
@@ -193,6 +196,8 @@ InitInput(argc, argv)
     DevicePtr p, k;
     static int  zero = 0;
 
+    ErrorF("InitInput: starting\n");
+
     p = AddInputDevice(amixMouseProc, TRUE);
     k = AddInputDevice(amixKbdProc, TRUE);
     if (!p || !k)
@@ -204,6 +209,8 @@ InitInput(argc, argv)
     miRegisterPointerDevice(screenInfo.screens[0], p);
     if (!mieqInit (k, p))
 	return FALSE;
+
+    ErrorF("InitInput: done\n");
 }
 
 

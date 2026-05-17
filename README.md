@@ -33,18 +33,29 @@ to explore how far a modern RTG card can be pushed under a 1991 Unix on
 
 - **Server compiles and links** on AMIX SVR4 — confirmed
 - **X server starts** — passes font path, initialises screen, accepts connections
+- **VA2000 display activates** — RTG device path selected at probe time;
+  VA2000 framebuffer initialises and displays correctly on startup
+- **RGB565 TrueColor rendering** — pixel colours correct; white is `0xFFFF`,
+  black is `0x0000`; xclock, xeyes, xcalc, and xload all render correctly
+- **Clean framebuffer start** — VRAM cleared to black on init, no garbage pixels
+- **Server reset** — survives client-side server resets (screen count preserved
+  across server generations via `static int n` in `InitOutput`)
+- **Multiple simultaneous clients** — tested with xclock, xeyes, xcalc, xload
 - **Build infrastructure** — imake config, RTG Imakefiles, install scripts
 
-### In Progress
+### Not Yet Implemented
 
-- **VA2000 RTG activation** — the fix that forces the RTG device path at probe
-  time (`amixInit.c` RTG_INDEX pre-initialisation) is implemented. A rebuild
-  on AMIX hardware is needed to confirm the VA2000 display activates on X start.
+- **Input devices** — keyboard and mouse not yet connected to the RTG path.
+  The X cursor is visible and rendered correctly, but cannot be moved.
+  Input requires calling `OpenScreen()` for the event fd without
+  `DisplayScreen()` and wiring it into `amixWakeupHandler`.
 
 ### Known Issues
 
-- Until the RTG activation fix is confirmed, X starts in Amiga native passthrough
-  mode instead of switching to the VA2000 framebuffer.
+- **twm requires input** — the default `twm` configuration uses interactive
+  window placement (click to position). Without input, twm intercepts all
+  `MapRequest` events and client windows never appear. As a workaround,
+  add `RandomPlacement` to `.twmrc` or run clients without a window manager.
 
 ---
 
@@ -211,6 +222,39 @@ Fix in `amixInit.c` `InitOutput()`:
 Fix: `#define BuildPex NO` in `amix.cf` (not just `BuildPexExt NO`).
 The `install-sources.sh` also regenerates `extensions/server/Makefile` via
 imake to pick up this setting.
+
+### ResolveColor overflow (whitePixel = 0 bug)
+
+`va2000ResolveColor` used to compute the rounded colour value in a single
+expression involving `unsigned short` arithmetic. On m68k with 16-bit
+`unsigned short`, the intermediate product `255 * 65535 = 16711425` overflows
+to 65281, which quantises to the wrong index. `FindBestPixel` would then find
+the nearest entry at index 0 (value 0), setting `whitePixel = 0` — the cursor
+rendered invisible and white text appeared as black.
+
+Fix — two-step computation that stays in `unsigned int`:
+
+```c
+idx   = ((unsigned int)*pRed * (limr + 1)) >> 16;
+*pRed = (unsigned short)((idx * 65535) / limr);
+```
+
+This matches the table initialisation in `va2000CreateColormap` exactly: index
+31 maps to `(31 * 65535) / 31 = 65535`, so `AllocColor(ones)` returns
+`0xFFFF`.
+
+### Framebuffer cleared on init
+
+VRAM contains random content at power-on. Without an explicit clear, the root
+window shows coloured garbage until the first expose repaint. Fix: `memset` on
+the framebuffer base immediately after the `mmap` in `va2000InitHW`.
+
+### Server reset handling
+
+The probe loop in `InitOutput()` increments a local `int n` to assign screen
+numbers. On server reset (`main()` calls `InitOutput` a second time) the local
+variable restarts at 0, re-probing screen 0 and accumulating `amixFbs` entries.
+Fix: `static int n = 0` so the count persists across server generations.
 
 ### TIGA symbol guard
 

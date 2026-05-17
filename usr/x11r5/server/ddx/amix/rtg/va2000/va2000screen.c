@@ -553,6 +553,21 @@ ScreenPtr pScreen;
     return TRUE;
 }
 
+/*
+** va2000DrawGuarantee — no backing store; nothing to do.
+**
+** Called by miDCMakeGC before drawing the software cursor.
+** With backingStoreSupport = NotUseful, there is no backing store to
+** guarantee, so this is a no-op.
+*/
+void
+va2000DrawGuarantee(pWin, pGC, guarantee)
+WindowPtr pWin;
+GCPtr     pGC;
+int       guarantee;
+{
+}
+
 /* ------------------------------------------------------------------ */
 /* Screen initialisation                                               */
 
@@ -592,6 +607,8 @@ DepthRec    *pDepth;
 
     pScreen->backingStoreSupport = NotUseful;
     pScreen->saveUnderSupport    = NotUseful;
+    pScreen->DrawGuarantee       = va2000DrawGuarantee;
+    pScreen->PostValidateTree    = (void (*)()) 0;
 
     pScreen->blackPixel = 0x0000;   /* RGB565 black */
     pScreen->whitePixel = 0xFFFF;   /* RGB565 white */
@@ -615,7 +632,7 @@ DepthRec    *pDepth;
     pScreen->SourceValidate   = (void (*)()) NULL;
 
     /* Pixel transfer — mi handles format conversion */
-    pScreen->GetImage  = miGetImage;
+    pScreen->GetImage  = va2000GetImage;
     pScreen->GetSpans  = va2000GetSpans;
 
     /* GC */
