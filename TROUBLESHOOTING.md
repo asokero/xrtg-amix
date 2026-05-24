@@ -4,6 +4,36 @@ Known problems encountered when building and installing Xrtg on AMIX SVR4.
 
 ---
 
+## 11. Keyboard and mouse stop working after server crash or kill -9
+
+**Problem:** After Xrtg is killed (with `kill -9`) or crashes, keyboard and
+mouse no longer reach new X sessions. The display may look correct but input
+is completely non-responsive.
+
+**Cause:** The AMIX screen manager (`scrmon`) routes input events between the
+native Amiga display and RTG screens. When Xrtg is killed without a clean
+shutdown, `scrmon` is left in an inconsistent state: it may continue routing
+events to the now-dead server fd, or route back to the native console without
+noticing when a new Xrtg starts and calls `SIOCACTIVATE`.
+
+Multiple rapid kill-and-restart cycles make this worse and can leave `scrmon`
+in a state that survives a soft reset.
+
+**Solution:** Do a full cold-boot: power the Amiga completely off, wait 10
+seconds, then power on again. A soft reset (`reset` button or `reboot`
+command) is sometimes sufficient but is not reliable after multiple crashes.
+
+After a cold boot, start Xrtg fresh with `start_xrtg.sh`. Do not restart it
+multiple times in rapid succession if input is still missing — this makes the
+`scrmon` state worse. Go straight to a cold boot.
+
+**Prevention:** Avoid `kill -9` where possible. If you need to stop the
+server, prefer letting it exit cleanly or send `SIGTERM` first
+(`kill <pid>`). The server does not yet have a built-in shutdown command
+from a client.
+
+---
+
 ## 1. `don't know how to make /usr/x11r5/lib/Xau/libXau.a`
 
 **Problem:** The server link step fails because `libXau.a` (or `libXdmcp.a`)

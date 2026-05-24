@@ -24,10 +24,15 @@ fi
 SCRIPT_DIR=`dirname "$0"`
 SRCDIR="${1:-$SCRIPT_DIR}"
 
+# Accept either the repo root (contains usr/x11r5/) or the x11r5 subtree directly
+if [ -f "$SRCDIR/usr/x11r5/config/amix.cf" ]; then
+    SRCDIR="$SRCDIR/usr/x11r5"
+fi
+
 if [ ! -f "$SRCDIR/config/amix.cf" ]; then
     echo "ERROR: Source files not found in: $SRCDIR" >&2
     echo "       Expected: $SRCDIR/config/amix.cf" >&2
-    echo "       Pass the changes directory as argument: sh install-sources.sh /path" >&2
+    echo "       Pass the repo root or usr/x11r5 subtree: sh install-sources.sh /path/to/xrtg-amix" >&2
     exit 1
 fi
 

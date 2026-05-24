@@ -8,7 +8,7 @@ RTG graphics card directly — bypassing the native Amiga display chipset.
 This is a companion project to
 [va2000-amix](https://github.com/asokero/va2000-amix), which provides the
 kernel device driver for the VA2000. Xrtg builds on top of that driver to run
-a full X11 session in 16-bit color via the VA2000 framebuffer.
+a full X11 session in 16-bit TrueColor via the VA2000 framebuffer.
 
 Xrtg is built entirely from the vanilla AMIX X11R5 source tree (Keith
 Gabryelski's public domain port of X11R5 to AMIX), with a new RTG DDX layer
@@ -31,31 +31,37 @@ to explore how far a modern RTG card can be pushed under a 1991 Unix on
 
 ### Working
 
-- **Server compiles and links** on AMIX SVR4 — confirmed
+- **Server compiles and links** on AMIX SVR4
 - **X server starts** — passes font path, initialises screen, accepts connections
-- **VA2000 display activates** — RTG device path selected at probe time;
-  VA2000 framebuffer initialises and displays correctly on startup
-- **RGB565 TrueColor rendering** — pixel colours correct; white is `0xFFFF`,
-  black is `0x0000`; xclock, xeyes, xcalc, and xload all render correctly
+- **VA2000 display activates** — 800×600 RGB565 TrueColor, correct colours
 - **Clean framebuffer start** — VRAM cleared to black on init, no garbage pixels
-- **Server reset** — survives client-side server resets (screen count preserved
-  across server generations via `static int n` in `InitOutput`)
-- **Multiple simultaneous clients** — tested with xclock, xeyes, xcalc, xload
-- **Build infrastructure** — imake config, RTG Imakefiles, install scripts
+- **Keyboard and mouse input** — routed via the AMIX screen manager
+  (`OpenScreen` / `SIOCACTIVATE`); twm responds to mouse and keyboard normally
+- **Window manager** — twm starts, window dragging and resizing work
+- **Multiple clients** — tested with twm, xclock, xterm (two instances)
+- **Hardware blitter — PaintWindow** — window background fills use the VA2000
+  hardware blitter (`blitFill`), which is noticeably faster than CPU fills
+- **Software cursor** — miDC cursor rendered correctly (no hardware sprite on
+  VA2000)
+- **Server reset** — survives client-side server resets across server
+  generations
 
-### Not Yet Implemented
+### Not Yet Implemented / Known Issues
 
-- **Input devices** — keyboard and mouse not yet connected to the RTG path.
-  The X cursor is visible and rendered correctly, but cannot be moved.
-  Input requires calling `OpenScreen()` for the event fd without
-  `DisplayScreen()` and wiring it into `amixWakeupHandler`.
-
-### Known Issues
-
-- **twm requires input** — the default `twm` configuration uses interactive
-  window placement (click to position). Without input, twm intercepts all
-  `MapRequest` events and client windows never appear. As a workaround,
-  add `RandomPlacement` to `.twmrc` or run clients without a window manager.
+- **Hardware blitter — SolidRect** — PolyFillRect (used by twm for title bars
+  and borders) falls back to CPU fills. Hardware acceleration here caused a
+  BLITWAIT hang during testing; root cause not yet determined.
+- **Hardware blitter — CopyWindow** — screen-to-screen window-move copies use
+  CPU `memmove`. The `blitCopy` function is implemented but not yet enabled.
+- **Graphical expose artefacts** — when windows are moved, small remnants can
+  appear. They clear when another window is moved over the area or (in xterm)
+  when text is typed over it. This is normal X11 behaviour without backing
+  store; a background of `BackgroundPixel` on the root window (e.g. via
+  `xsetroot -solid black` after twm starts) reduces visible artefacts.
+- **No hardware cursor sprite** — VA2000 has no hardware cursor; the FPGA
+  source contains a placeholder `display_sprite` register that is never driven.
+- **Fixed resolution** — 800×600 is hardcoded. Resolution selection via a
+  config file or command-line flag is planned.
 
 ---
 
@@ -74,8 +80,10 @@ to explore how far a modern RTG card can be pushed under a 1991 Unix on
 ## Files
 
 ```
+start_xrtg.sh                    Start Xrtg and a basic X session (twm + xterm)
 install-sources.sh               Install modified sources into /usr/x11r5 tree
 install-xrtg.sh                  Install compiled Xrtg binary to /usr/bin/X11
+make-release.sh                  Package compiled Xrtg into a binary tar archive
 
 usr/x11r5/
   config/
@@ -95,14 +103,14 @@ usr/x11r5/
     ddx/amix/rtg/
       Imakefile                  RTG layer Imakefile
       rtg.h                      RTG type definitions
-      rtgInit.c                  rtgProbe / rtgCreate — screen init entry points
+      rtgInit.c                  rtgProbe / rtgCreate — screen init, input fd
 
     ddx/amix/rtg/va2000/
       Imakefile                  VA2000 driver Imakefile
-      va2000.h                   Hardware definitions, function declarations
+      va2000.h                   Hardware definitions, blitter registers
       va2000hw.c                 Hardware init — mode set, register programming
       va2000screen.c             Screen setup — depth, colormap, GC operations
-      va2000draw.c               Drawing operations — spans, fill, copy
+      va2000draw.c               Drawing ops — blitter fill, CPU spans/copy
       va2000win.c                Window operations
       va2000cmap.c               Colormap management — 16-bit RGB565
       va2000pix.c                Pixmap operations
@@ -118,30 +126,18 @@ usr/x11r5/
 
 ### Prerequisites
 
-1. AMIX SVR4 2.1p2a installed with the vanilla X11R5 source tree at `/usr/x11r5`
-2. VA2000 kernel driver installed (`/dev/va2000` exists, returns data)
-3. Transfer this repository to the AMIX machine
+1. AMIX SVR4 2.1p2a with the vanilla X11R5 source tree at `/usr/x11r5`
+2. VA2000 kernel driver installed (`/dev/va2000` exists)
+3. This repository transferred to the AMIX machine
 
 ### 1. Install sources into X11R5 tree
-
-Run from `/usr/x11r5`:
 
 ```sh
 cd /usr/x11r5
 sh /path/to/install-sources.sh /path/to/xrtg-amix
 ```
 
-The script:
-- Backs up modified files (`.orig` suffix)
-- Copies new RTG source files into place
-- Copies pre-built `libXau.a` and `libXdmcp.a` from `/usr/X/lib/`
-- Creates the `X11 -> include` symlink for makedepend
-- Regenerates `extensions/server/Makefile` and `server/Makefile` via imake
-- Checks for `libfont.a` and `libext.a` and warns if missing
-
 ### 2. Build prerequisite libraries
-
-These must be built before the server link step:
 
 ```sh
 cd /usr/x11r5/fonts/lib/font && make
@@ -155,23 +151,23 @@ cd /usr/x11r5/server
 make Makefiles && make depend && make Xrtg
 ```
 
-The binary lands at `/usr/x11r5/server/Xrtg`.
-
 ### 4. Install the binary
-
-Run as root from `/usr/x11r5/server`:
 
 ```sh
 sh /path/to/install-xrtg.sh
 ```
 
-Installs `Xrtg` to `/usr/bin/X11/Xrtg` and creates the `X -> Xrtg` symlink.
-
 ### 5. Start X
 
+From a root shell (telnet or console):
+
 ```sh
-xinit -- /usr/bin/X11/Xrtg
+sh /path/to/start_xrtg.sh
 ```
+
+This starts Xrtg, waits for it to initialise, then launches twm, xclock,
+and two xterm windows. All clients are run with `nohup` so they survive
+when the calling shell session closes.
 
 ---
 
@@ -213,62 +209,83 @@ Fix in `amixInit.c` `InitOutput()`:
 #endif
 ```
 
+### Input via AMIX screen manager
+
+The AMIX screen manager (`scrmon`) routes keyboard and mouse events between
+the native Amiga display and any RTG screens. `rtgProbe()` calls
+`OpenScreen()` to register a screen context, then `SIOCACTIVATE` to make it
+the active event target. The server reads raw keyboard and mouse events from
+the resulting fd; `SIOCSETINPUTMODE(SIM_RAWKEY)` puts the keyboard in raw
+mode.
+
+`SIOCACTIVATE` routes events without switching the video output, so the
+native Amiga screen is unaffected while Xrtg is running on the RTG card.
+
+### Hardware blitter — PaintWindow
+
+Window background fills (`PaintWindow`) use the VA2000 hardware blitter for
+`BackgroundPixel` windows. The blitter addresses SDRAM directly; the correct
+source address for row `y` is:
+
+```c
+src = (unsigned long)y * VA2000_WIDTH;   /* SDRAM word address, no fb_off */
+SRC_HI = src >> 16;
+SRC_LO = src & 0xffff;                  /* full 16 bits, no masking */
+```
+
+This formula was verified against `blit_test4.c` and the FPGA Verilog source.
+An earlier version incorrectly added `VA2000_FB_WORDS` (0x8000) and masked
+`SRC_LO` with `0xfc00`, which caused fills to write to the wrong SDRAM rows
+and produced full-width horizontal stripes.
+
+The blitter register sequence (fill mode):
+
+```
+BLT_SRC_HI  = src >> 16
+BLT_SRC_LO  = src & 0xffff
+BLT_ROWPITCH = VA2000_WIDTH   (800 pixels)
+BLT_COLORMODE = 1             (16-bit)
+BLT_RGB16   = fill colour
+BLT_X1/Y1   = top-left (inclusive)
+BLT_X2/Y2   = bottom-right (inclusive)
+BLT_ENABLE  = 1              (fire; poll until 0)
+```
+
 ### BuildPex cascade in X11R5
 
-`Project.tmpl` defaults `BuildPex = YES`, which cascades to
-`BuildPexClients = YES` and causes `extensions/server/Makefile` to include
-`PEX/dipex/swap` in `SUBDIRS`. PEXproto.h does not exist on AMIX.
+`Project.tmpl` defaults `BuildPex = YES`, cascading to `BuildPexClients = YES`
+and causing `extensions/server/Makefile` to include `PEX/dipex/swap` which
+requires `PEXproto.h` — absent on AMIX.
 
-Fix: `#define BuildPex NO` in `amix.cf` (not just `BuildPexExt NO`).
-The `install-sources.sh` also regenerates `extensions/server/Makefile` via
-imake to pick up this setting.
+Fix: `#define BuildPex NO` in `amix.cf`.
 
 ### ResolveColor overflow (whitePixel = 0 bug)
 
-`va2000ResolveColor` used to compute the rounded colour value in a single
-expression involving `unsigned short` arithmetic. On m68k with 16-bit
-`unsigned short`, the intermediate product `255 * 65535 = 16711425` overflows
-to 65281, which quantises to the wrong index. `FindBestPixel` would then find
-the nearest entry at index 0 (value 0), setting `whitePixel = 0` — the cursor
-rendered invisible and white text appeared as black.
+`va2000ResolveColor` used `unsigned short` arithmetic where the intermediate
+product `255 × 65535 = 16711425` overflows 16 bits, causing `whitePixel = 0`
+and an invisible cursor.
 
-Fix — two-step computation that stays in `unsigned int`:
+Fix — two-step computation in `unsigned int`:
 
 ```c
 idx   = ((unsigned int)*pRed * (limr + 1)) >> 16;
 *pRed = (unsigned short)((idx * 65535) / limr);
 ```
 
-This matches the table initialisation in `va2000CreateColormap` exactly: index
-31 maps to `(31 * 65535) / 31 = 65535`, so `AllocColor(ones)` returns
-`0xFFFF`.
-
 ### Framebuffer cleared on init
 
-VRAM contains random content at power-on. Without an explicit clear, the root
-window shows coloured garbage until the first expose repaint. Fix: `memset` on
-the framebuffer base immediately after the `mmap` in `va2000InitHW`.
+VRAM contains random content at power-on. `va2000InitHW` clears the
+framebuffer to black with `memset` immediately after `mmap`.
 
 ### Server reset handling
 
-The probe loop in `InitOutput()` increments a local `int n` to assign screen
-numbers. On server reset (`main()` calls `InitOutput` a second time) the local
-variable restarts at 0, re-probing screen 0 and accumulating `amixFbs` entries.
-Fix: `static int n = 0` so the count persists across server generations.
+`InitOutput()` uses `static int n = 0` so the screen count persists across
+server generations (resets).
 
 ### TIGA symbol guard
 
-`amixCursor.c` calls `tigCursorInitialize()` unconditionally. TIGA is not
-compiled in the RTG build, so this symbol is undefined at link time.
-
-Fix: `#ifdef TIGA` guard around the call. Without TIGA, `amixCursorInitialize`
-returns `FALSE` and `amixScreenInit` falls back to `miDCInitialize`.
-
-### ForceSubdirs does not build libraries
-
-`ForceSubdirs` in X11R5 imake generates directory targets, not `.a` file
-targets. `libfont.a` and `libext.a` must be built by entering their directories
-explicitly before `make Xrtg`.
+`amixCursor.c` now guards `tigCursorInitialize()` with `#ifdef TIGA` to
+avoid a link error in RTG-only builds.
 
 ---
 

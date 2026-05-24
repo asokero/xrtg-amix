@@ -123,10 +123,42 @@
     ((unsigned short *)(fbbase) + (y) * (VA2000_PITCH / 2) + (x))
 
 /*
-** Write a register in the control area (before the framebuffer).
+** Write / read a register in the control area (before the framebuffer).
 */
 #define VA2000_WRITEREG(base, reg, val) \
     (*((volatile unsigned short *)((char *)(base) + (reg))) = (unsigned short)(val))
+#define VA2000_READREG(base, reg) \
+    (*((volatile unsigned short *)((char *)(base) + (reg))))
+
+/* ---------------------------------------------------------------------- */
+/* Blitter registers (NetBSD mntvareg.h offsets)                           */
+
+/*
+** Blitter registers — offsets from mmap base (verified against va2000_blittest.c).
+** NOTE: 0x1c/0x1e are the BLITTER's own pitch/colormode (separate from the
+**       display pitch at 0x58/0x5c).  0x40/0x42 are the source-address pointer
+**       that must be set to the VRAM word-address of the top-left source row
+**       before each blit operation.
+*/
+#define VA2000_BLT_ROWPITCH  0x1c   /* blitter row pitch in pixels          */
+#define VA2000_BLT_COLORMODE 0x1e   /* blitter color mode: 1=16bit          */
+#define VA2000_BLT_X1        0x20   /* destination x1                       */
+#define VA2000_BLT_Y1        0x22   /* destination y1                       */
+#define VA2000_BLT_X2        0x24   /* destination x2 (inclusive)           */
+#define VA2000_BLT_Y2        0x26   /* destination y2 (inclusive)           */
+#define VA2000_BLT_RGB16     0x28   /* fill color (16-bit RGB565)           */
+#define VA2000_BLT_ENABLE    0x2A   /* write to fire; poll until 0 = done   */
+#define   VA2000_BLT_FILL    0x0001 /* fill [x1,y1]-[x2,y2] with RGB16     */
+#define   VA2000_BLT_COPY    0x0002 /* copy [x3,y3]-[x4,y4]->[x1,y1]       */
+#define VA2000_BLT_X3        0x2C   /* source x1 (copy)                     */
+#define VA2000_BLT_Y3        0x2E   /* source y1 (copy)                     */
+#define VA2000_BLT_X4        0x30   /* source x2 (copy, inclusive)          */
+#define VA2000_BLT_Y4        0x32   /* source y2 (copy, inclusive)          */
+#define VA2000_BLT_SRC_HI    0x40   /* source VRAM word-address [31:16]     */
+#define VA2000_BLT_SRC_LO    0x42   /* source VRAM word-address [15:0]      */
+
+/* Word offset of framebuffer start within the mmap region (FB_OFFSET/2) */
+#define VA2000_FB_WORDS      (VA2000_FB_OFFSET / 2)
 
 /* ======================================================================= */
 /* = Card-specific screen private                                        = */

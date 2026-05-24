@@ -122,7 +122,7 @@ rtgScreenPtr pRTG;
     pVA->regBase = (pointer) base;
     pVA->fbBase  = (unsigned short *)(base + VA2000_FB_OFFSET);
 
-    /* Clear framebuffer to black so root window starts clean */
+    /* Clear framebuffer to black via CPU — safe, known-working. */
     memset(pVA->fbBase, 0, VA2000_HEIGHT * VA2000_PITCH);
 
     pRTG->frameBase   = (pointer) base;

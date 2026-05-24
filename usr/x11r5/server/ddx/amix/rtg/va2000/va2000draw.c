@@ -39,6 +39,76 @@
 
 #define VA2000_STRIDE  (VA2000_PITCH / 2)   /* shorts (pixels) per scanline */
 
+/* ---------------------------------------------------------------------- */
+/* Hardware blitter helpers                                                 */
+
+#define BLITWAIT(base) \
+    while (VA2000_READREG(base, VA2000_BLT_ENABLE) != 0) ;
+
+/*
+** BLITSRC — SDRAM word address of row y, pixel 0.
+** FPGA SDRAM word 0 == framebuffer pixel (0,0); Zorro addresses are mapped
+** as (z3addr - z3_ram_low) >> 1, so VA2000_FB_WORDS is NOT added.
+** Formula verified against blit_test4.c (the authoritative reference).
+*/
+#define BLITSRC_HI(y) \
+    ((unsigned short)(((unsigned long)(y) * VA2000_WIDTH) >> 16))
+#define BLITSRC_LO(y) \
+    ((unsigned short)(((unsigned long)(y) * VA2000_WIDTH) & 0xffff))
+
+/*
+** blitFill — fill a screen rectangle with a solid colour via hardware.
+** All coordinates are absolute screen pixels; (x2,y2) are inclusive.
+** Sequence from va2000_blittest.c (confirmed working on this hardware).
+*/
+static void
+blitFill(regBase, x1, y1, x2, y2, color)
+pointer        regBase;
+unsigned short x1, y1, x2, y2, color;
+{
+    BLITWAIT(regBase);
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_HI,   BLITSRC_HI(y1));
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_LO,   BLITSRC_LO(y1));
+    VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  VA2000_WIDTH);
+    VA2000_WRITEREG(regBase, VA2000_BLT_COLORMODE, 1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_RGB16,     color);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X1,        x1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y1,        y1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X2,        x2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y2,        y2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_ENABLE,    VA2000_BLT_FILL);
+    BLITWAIT(regBase);
+}
+
+/*
+** blitCopy — screen-to-screen blit via hardware.
+** Source [sx1,sy1]-[sx2,sy2] → destination top-left [dx1,dy1].
+** SRC is set to the VRAM word-address of source row sy1 (col 0).
+*/
+static void
+blitCopy(regBase, sx1, sy1, sx2, sy2, dx1, dy1)
+pointer        regBase;
+unsigned short sx1, sy1, sx2, sy2, dx1, dy1;
+{
+    unsigned short dx2 = dx1 + (sx2 - sx1);
+    unsigned short dy2 = dy1 + (sy2 - sy1);
+    BLITWAIT(regBase);
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_HI,   BLITSRC_HI(sy1));
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_LO,   BLITSRC_LO(sy1));
+    VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  VA2000_WIDTH);
+    VA2000_WRITEREG(regBase, VA2000_BLT_COLORMODE, 1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X1,        dx1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y1,        dy1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X2,        dx2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y2,        dy2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X3,        sx1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y3,        sy1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X4,        sx2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y4,        sy2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_ENABLE,    VA2000_BLT_COPY);
+    BLITWAIT(regBase);
+}
+
 /*
 ** Pixel base and stride for a drawable (window → VRAM; pixmap → host mem).
 */
@@ -62,11 +132,13 @@ DrawablePtr pDraw;
 }
 
 /*
-** Copy a rectangle within the framebuffer, handling overlaps.
-** All coordinates are absolute (in pixels); stride is shorts per row.
+** copyVRAMBox — copy a screen rectangle via CPU memmove.
+** Handles overlapping src/dst correctly by choosing row direction.
+** (Hardware blitCopy is implemented but not yet enabled here — see blitCopy().)
 */
 static void
-copyVRAMBox(fbBase, stride, srcx, srcy, w, h, dstx, dsty)
+copyVRAMBox(regBase, fbBase, stride, srcx, srcy, w, h, dstx, dsty)
+pointer         regBase;
 unsigned short *fbBase;
 int             stride;
 int             srcx, srcy, w, h, dstx, dsty;
@@ -83,7 +155,7 @@ int             srcx, srcy, w, h, dstx, dsty;
         {
             src = fbBase + (srcy + row) * stride + srcx;
             dst = fbBase + (dsty + row) * stride + dstx;
-            memmove((char *)dst, (char *)src, (size_t)(w * 2));
+            memmove(dst, src, (size_t)(w * 2));
         }
     }
     else
@@ -92,7 +164,7 @@ int             srcx, srcy, w, h, dstx, dsty;
         {
             src = fbBase + (srcy + row) * stride + srcx;
             dst = fbBase + (dsty + row) * stride + dstx;
-            memmove((char *)dst, (char *)src, (size_t)(w * 2));
+            memmove(dst, src, (size_t)(w * 2));
         }
     }
 }
@@ -124,8 +196,6 @@ unsigned int   format;
 unsigned long  planeMask;
 pointer        pdstLine;
 {
-    ErrorF("va2000GetImage: pDraw=%p pDraw->pScreen=%p type=%d\n",
-           pDraw, pDraw->pScreen, pDraw->type);
     miGetImage(pDraw, sx, sy, w, h, format, planeMask, pdstLine);
 }
 
@@ -150,8 +220,10 @@ int         fSorted;
 {
     rtgScreenPtr    pRTG   = GetRTGScreen(pDraw->pScreen);
     unsigned short  pixel  = (unsigned short) pGC->fgPixel;
+    int             alu    = pGC->alu;
     unsigned short *base   = drawBase(pDraw, pRTG);
     int             stride = drawStride(pDraw);
+    unsigned short *p;
     int             i, w;
 
     nspans = miClipSpans(rtgGCClip(pGC),
@@ -161,8 +233,30 @@ int         fSorted;
     for (i = 0; i < nspans; i++)
     {
         w = pwidths[i];
-        if (w > 0)
-            fillRun(base + ppts[i].y * stride + ppts[i].x, pixel, w);
+        if (w <= 0)
+            continue;
+        p = base + ppts[i].y * stride + ppts[i].x;
+
+        switch (alu)
+        {
+        case GXcopy:         while (w-->0)  *p++ = pixel;              break;
+        case GXxor:          while (w-->0) { *p ^= pixel;    p++; }    break;
+        case GXor:           while (w-->0) { *p |= pixel;    p++; }    break;
+        case GXand:          while (w-->0) { *p &= pixel;    p++; }    break;
+        case GXinvert:       while (w-->0) { *p ^= 0xFFFF;  p++; }    break;
+        case GXclear:        while (w-->0)  *p++ = 0;                  break;
+        case GXset:          while (w-->0)  *p++ = 0xFFFF;             break;
+        case GXnoop:                                                    break;
+        case GXcopyInverted: while (w-->0)  *p++ = ~pixel;             break;
+        case GXandReverse:   while (w-->0) { *p = pixel & ~*p;  p++; } break;
+        case GXandInverted:  while (w-->0) { *p &= ~pixel;      p++; } break;
+        case GXorReverse:    while (w-->0) { *p = pixel | ~*p;  p++; } break;
+        case GXnor:          while (w-->0) { *p = ~(pixel | *p); p++; } break;
+        case GXequiv:        while (w-->0) { *p = ~(pixel ^ *p); p++; } break;
+        case GXorInverted:   while (w-->0) { *p |= ~pixel;      p++; } break;
+        case GXnand:         while (w-->0) { *p = ~(pixel & *p); p++; } break;
+        default:             while (w-->0)  *p++ = pixel;              break;
+        }
     }
 }
 
@@ -355,12 +449,8 @@ int       what;
 {
     rtgScreenPtr    pRTG   = GetRTGScreen(pWin->drawable.pScreen);
     unsigned short  pixel;
-    unsigned short *base   = pRTG->fbBase;
     BoxPtr          pbox;
     int             nbox;
-    int             x, y, w, h;
-
-    ErrorF("va2000PaintWindow: what=%d fbBase=%p\n", what, pRTG ? pRTG->fbBase : 0);
 
     if (what == PW_BACKGROUND)
     {
@@ -371,9 +461,28 @@ int       what;
         case BackgroundPixel:
             pixel = (unsigned short) pWin->background.pixel;
             break;
+        case ParentRelative:
+            /* Walk up to find the nearest solid background */
+            {
+                WindowPtr p = pWin->parent;
+                while (p && p->backgroundState == ParentRelative)
+                    p = p->parent;
+                if (p && p->backgroundState == BackgroundPixel)
+                    pixel = (unsigned short) p->background.pixel;
+                else
+                    pixel = (unsigned short) pWin->drawable.pScreen->blackPixel;
+            }
+            break;
         default:
-            /* BackgroundPixmap / ParentRelative: not yet implemented */
-            return;
+            /* BackgroundPixmap: read first pixel from tile for solid approx. */
+            {
+                PixmapPtr   pTile  = pWin->background.pixmap;
+                unsigned short *tp = (unsigned short *) pTile->devPrivate.ptr;
+                pixel = (pTile && pTile->drawable.depth == VA2000_DEPTH && tp)
+                        ? *tp
+                        : (unsigned short) pWin->drawable.pScreen->blackPixel;
+            }
+            break;
         }
     }
     else /* PW_BORDER */
@@ -381,25 +490,32 @@ int       what;
         if (pWin->borderIsPixel)
             pixel = (unsigned short) pWin->border.pixel;
         else
-            return;   /* pixmap border: not yet implemented */
+        {
+            /* Pixmap border: read first pixel for solid approx. */
+            PixmapPtr   pTile  = pWin->border.pixmap;
+            unsigned short *tp = (unsigned short *) pTile->devPrivate.ptr;
+            pixel = (pTile && pTile->drawable.depth == VA2000_DEPTH && tp)
+                    ? *tp
+                    : (unsigned short) pWin->drawable.pScreen->blackPixel;
+        }
     }
 
     nbox = REGION_NUM_RECTS(prgn);
     pbox = REGION_RECTS(prgn);
 
-    while (nbox--)
     {
-        x = pbox->x1;
-        y = pbox->y1;
-        w = pbox->x2 - pbox->x1;
-        h = pbox->y2 - pbox->y1;
-
-        while (h-- > 0)
+        pointer regBase = pRTG->frameBase;
+        while (nbox--)
         {
-            fillRun(base + y * VA2000_STRIDE + x, pixel, w);
-            y++;
+            if (pbox->x1 < pbox->x2 && pbox->y1 < pbox->y2)
+                blitFill(regBase,
+                         (unsigned short) pbox->x1,
+                         (unsigned short) pbox->y1,
+                         (unsigned short)(pbox->x2 - 1),
+                         (unsigned short)(pbox->y2 - 1),
+                         pixel);
+            pbox++;
         }
-        pbox++;
     }
 }
 
@@ -470,7 +586,7 @@ RegionPtr   prgnSrc;
         ppt  += nbox - 1;
         for (i = 0; i < nbox; i++, pbox--, ppt--)
         {
-            copyVRAMBox(pRTG->fbBase, VA2000_STRIDE,
+            copyVRAMBox(pRTG->frameBase, pRTG->fbBase, VA2000_STRIDE,
                         ppt->x,  ppt->y,
                         pbox->x2 - pbox->x1,
                         pbox->y2 - pbox->y1,
@@ -481,7 +597,7 @@ RegionPtr   prgnSrc;
     {
         for (i = 0; i < nbox; i++, pbox++, ppt++)
         {
-            copyVRAMBox(pRTG->fbBase, VA2000_STRIDE,
+            copyVRAMBox(pRTG->frameBase, pRTG->fbBase, VA2000_STRIDE,
                         ppt->x,  ppt->y,
                         pbox->x2 - pbox->x1,
                         pbox->y2 - pbox->y1,
@@ -578,7 +694,7 @@ int         dstx, dsty;
             bw    = cx2 - cx1;
             bh    = cy2 - cy1;
 
-            copyVRAMBox(fbBase, VA2000_STRIDE, bsrcx, bsrcy, bw, bh, cx1, cy1);
+            copyVRAMBox(pRTG->frameBase, fbBase, VA2000_STRIDE, bsrcx, bsrcy, bw, bh, cx1, cy1);
         }
 
         if (dy_move > 0 || (dy_move == 0 && dx_move > 0))

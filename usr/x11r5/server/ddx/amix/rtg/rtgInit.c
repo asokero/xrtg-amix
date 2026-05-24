@@ -307,17 +307,25 @@ char      **argv;
     {
         ErrorF("rtgProbe: OpenScreen failed (%s); starting display-only\n",
                ScreenError());
-        amixFbs[index].fd     = -1;
-        amixFbs[index].mapped = FALSE;
+        fd = -1;
     }
-    else
+
+    if (fd >= 0)
     {
         if (fcntl(fd, F_SETFL, O_NDELAY) == -1)
             ErrorF("rtgProbe: F_SETFL O_NDELAY failed (%s)\n",
                    strerror(errno));
 
-        if (DisplayScreen(fd))
-            ErrorF("rtgProbe: DisplayScreen failed (%s)\n", ScreenError());
+        /* SIOCACTIVATE (SelectScreen) makes our screen context the active
+        ** one for keyboard/mouse event delivery without calling DisplayScreen.
+        ** DisplayScreen would require NewBitmap (chip RAM for a native bitmap)
+        ** and would take over the ECS display, causing the screen manager to
+        ** send SIGHUP to the X server when the native console loses its screen.
+        ** SIOCACTIVATE selects our screen as the event target without switching
+        ** the displayed screen group, so the native Amiga display is unaffected
+        ** and no spurious SIGHUP is generated. */
+        if (ioctl(fd, SIOCACTIVATE, 0))
+            ErrorF("rtgProbe: SIOCACTIVATE failed (%s)\n", strerror(errno));
 
         if (ioctl(fd, SIOCSETINPUTMODE, SIM_RAWKEY))
             ErrorF("rtgProbe: SIOCSETINPUTMODE SIM_RAWKEY failed (%s)\n",
@@ -327,13 +335,17 @@ char      **argv;
         amixFbs[index].mapped = TRUE;
         amixFbs[index].group  = ioctl(fd, SIOCGETGROUP, 0);
 
-        /* Wire keyboard and mouse private fds — both read from the same fd */
         sysKbPriv.fd           = fd;
         sysMousePriv.fd        = fd;
         amixCurrentScreenIndex = index;
 
         ErrorF("rtgProbe: input fd=%d group=%d\n",
                fd, amixFbs[index].group);
+    }
+    else
+    {
+        amixFbs[index].fd     = -1;
+        amixFbs[index].mapped = FALSE;
     }
 
     amixFbs[index].bp.width  = VA2000_WIDTH;
