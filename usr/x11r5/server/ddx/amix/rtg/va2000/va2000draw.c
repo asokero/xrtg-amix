@@ -82,29 +82,39 @@ unsigned short x1, y1, x2, y2, color;
 
 /*
 ** blitCopy — screen-to-screen blit via hardware.
-** Source [sx1,sy1]-[sx2,sy2] → destination top-left [dx1,dy1].
-** SRC is set to the VRAM word-address of source row sy1 (col 0).
+**
+** Register layout from FPGA Verilog (va2000-spartan6/va2000.v):
+**   0x40/0x42 = blitter_base  — SDRAM word addr of destination STARTING row
+**   0x44/0x46 = blitter_base2 — SDRAM word addr of source STARTING row
+**   0x1c      = blitter_row_pitch
+**
+** Caller controls copy direction by the order of X/Y coordinates:
+**   Forward (Y1<Y2, Y3<Y4): top-to-bottom — for non-overlapping or upward moves
+**   Reverse (Y1>Y2, Y3>Y4): bottom-to-top — for downward overlapping moves
+**   dbase / sbase must point to the STARTING row (not necessarily the topmost).
 */
 static void
-blitCopy(regBase, sx1, sy1, sx2, sy2, dx1, dy1)
+blitCopy(regBase, x1, y1, x2, y2, x3, y3, x4, y4, dbase, sbase)
 pointer        regBase;
-unsigned short sx1, sy1, sx2, sy2, dx1, dy1;
+unsigned short x1, y1, x2, y2;  /* destination start → end (inclusive) */
+unsigned short x3, y3, x4, y4;  /* source start → end (inclusive) */
+unsigned long  dbase, sbase;     /* SDRAM word addr of dest/src starting row */
 {
-    unsigned short dx2 = dx1 + (sx2 - sx1);
-    unsigned short dy2 = dy1 + (sy2 - sy1);
     BLITWAIT(regBase);
-    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_HI,   BLITSRC_HI(sy1));
-    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_LO,   BLITSRC_LO(sy1));
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_HI,   (unsigned short)(dbase >> 16));
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC_LO,   (unsigned short)(dbase & 0xffff));
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC2_HI,  (unsigned short)(sbase >> 16));
+    VA2000_WRITEREG(regBase, VA2000_BLT_SRC2_LO,  (unsigned short)(sbase & 0xffff));
     VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  VA2000_WIDTH);
     VA2000_WRITEREG(regBase, VA2000_BLT_COLORMODE, 1);
-    VA2000_WRITEREG(regBase, VA2000_BLT_X1,        dx1);
-    VA2000_WRITEREG(regBase, VA2000_BLT_Y1,        dy1);
-    VA2000_WRITEREG(regBase, VA2000_BLT_X2,        dx2);
-    VA2000_WRITEREG(regBase, VA2000_BLT_Y2,        dy2);
-    VA2000_WRITEREG(regBase, VA2000_BLT_X3,        sx1);
-    VA2000_WRITEREG(regBase, VA2000_BLT_Y3,        sy1);
-    VA2000_WRITEREG(regBase, VA2000_BLT_X4,        sx2);
-    VA2000_WRITEREG(regBase, VA2000_BLT_Y4,        sy2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X1,        x1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y1,        y1);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X2,        x2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y2,        y2);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X3,        x3);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y3,        y3);
+    VA2000_WRITEREG(regBase, VA2000_BLT_X4,        x4);
+    VA2000_WRITEREG(regBase, VA2000_BLT_Y4,        y4);
     VA2000_WRITEREG(regBase, VA2000_BLT_ENABLE,    VA2000_BLT_COPY);
     BLITWAIT(regBase);
 }
@@ -132,9 +142,10 @@ DrawablePtr pDraw;
 }
 
 /*
-** copyVRAMBox — copy a screen rectangle via CPU memmove.
-** Handles overlapping src/dst correctly by choosing row direction.
-** (Hardware blitCopy is implemented but not yet enabled here — see blitCopy().)
+** copyVRAMBox — copy a screen rectangle via hardware blitter.
+** blitter_base / blitter_base2 (0x40-0x46) supply the starting-row SDRAM
+** word addresses; X/Y coordinate order controls copy direction so that
+** overlapping moves are handled correctly by the hardware.
 */
 static void
 copyVRAMBox(regBase, fbBase, stride, srcx, srcy, w, h, dstx, dsty)
@@ -143,29 +154,34 @@ unsigned short *fbBase;
 int             stride;
 int             srcx, srcy, w, h, dstx, dsty;
 {
-    unsigned short *src, *dst;
-    int             row;
+    unsigned long dbase, sbase;
 
     if (w <= 0 || h <= 0)
         return;
 
     if (dsty < srcy || (dsty == srcy && dstx <= srcx))
     {
-        for (row = 0; row < h; row++)
-        {
-            src = fbBase + (srcy + row) * stride + srcx;
-            dst = fbBase + (dsty + row) * stride + dstx;
-            memmove(dst, src, (size_t)(w * 2));
-        }
+        /* Forward: top row first, left column first */
+        dbase = (unsigned long) dsty * VA2000_WIDTH;
+        sbase = (unsigned long) srcy * VA2000_WIDTH;
+        blitCopy(regBase,
+            (unsigned short) dstx,       (unsigned short) dsty,
+            (unsigned short)(dstx+w-1),  (unsigned short)(dsty+h-1),
+            (unsigned short) srcx,       (unsigned short) srcy,
+            (unsigned short)(srcx+w-1),  (unsigned short)(srcy+h-1),
+            dbase, sbase);
     }
     else
     {
-        for (row = h - 1; row >= 0; row--)
-        {
-            src = fbBase + (srcy + row) * stride + srcx;
-            dst = fbBase + (dsty + row) * stride + dstx;
-            memmove(dst, src, (size_t)(w * 2));
-        }
+        /* Reverse: bottom row first, right column first */
+        dbase = (unsigned long)(dsty + h - 1) * VA2000_WIDTH;
+        sbase = (unsigned long)(srcy + h - 1) * VA2000_WIDTH;
+        blitCopy(regBase,
+            (unsigned short)(dstx+w-1),  (unsigned short)(dsty+h-1),
+            (unsigned short) dstx,       (unsigned short) dsty,
+            (unsigned short)(srcx+w-1),  (unsigned short)(srcy+h-1),
+            (unsigned short) srcx,       (unsigned short) srcy,
+            dbase, sbase);
     }
 }
 
@@ -379,6 +395,9 @@ unsigned long *pdstStart;
 **
 ** prects coordinates are drawable-relative; we add pDraw->x/y to get
 ** absolute screen coordinates before clipping against the GC clip.
+**
+** Window drawables: hardware blitFill (fast path).
+** Pixmap drawables: CPU fill (blitter addresses VRAM, not host memory).
 */
 void
 va2000SolidRect(pDraw, pGC, nrects, prects)
@@ -392,6 +411,7 @@ xRectangle *prects;
     unsigned short *base   = drawBase(pDraw, pRTG);
     int             stride = drawStride(pDraw);
     RegionPtr       clip   = rtgGCClip(pGC);
+    int             useHW  = (pDraw->type == DRAWABLE_WINDOW);
     BoxPtr          pbox;
     int             nbox;
     int             xorg   = pDraw->x;
@@ -420,10 +440,22 @@ xRectangle *prects;
 
             if (cx1 < cx2 && cy1 < cy2)
             {
-                w = cx2 - cx1;
-                h = cy2 - cy1;
-                for (y = cy1; y < cy1 + h; y++)
-                    fillRun(base + y * stride + cx1, pixel, w);
+                if (useHW)
+                {
+                    blitFill(pRTG->frameBase,
+                             (unsigned short) cx1,
+                             (unsigned short) cy1,
+                             (unsigned short)(cx2 - 1),
+                             (unsigned short)(cy2 - 1),
+                             pixel);
+                }
+                else
+                {
+                    w = cx2 - cx1;
+                    h = cy2 - cy1;
+                    for (y = cy1; y < cy1 + h; y++)
+                        fillRun(base + y * stride + cx1, pixel, w);
+                }
             }
             pbox++;
         }

@@ -154,8 +154,10 @@
 #define VA2000_BLT_Y3        0x2E   /* source y1 (copy)                     */
 #define VA2000_BLT_X4        0x30   /* source x2 (copy, inclusive)          */
 #define VA2000_BLT_Y4        0x32   /* source y2 (copy, inclusive)          */
-#define VA2000_BLT_SRC_HI    0x40   /* source VRAM word-address [31:16]     */
-#define VA2000_BLT_SRC_LO    0x42   /* source VRAM word-address [15:0]      */
+#define VA2000_BLT_SRC_HI    0x40   /* blitter_base  [23:16] — dest row addr */
+#define VA2000_BLT_SRC_LO    0x42   /* blitter_base  [15:0]  — dest row addr */
+#define VA2000_BLT_SRC2_HI   0x44   /* blitter_base2 [23:16] — src  row addr */
+#define VA2000_BLT_SRC2_LO   0x46   /* blitter_base2 [15:0]  — src  row addr */
 
 /* Word offset of framebuffer start within the mmap region (FB_OFFSET/2) */
 #define VA2000_FB_WORDS      (VA2000_FB_OFFSET / 2)
