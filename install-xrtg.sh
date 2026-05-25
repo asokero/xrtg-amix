@@ -118,6 +118,24 @@ ln -s Xrtg "$XLINK"
 echo "  created:  $XLINK -> Xrtg"
 
 # --------------------------------------------------------------------------
+# Install start script
+# --------------------------------------------------------------------------
+
+echo "Installing start script..."
+
+SCRIPT_DIR=`dirname "$0"`
+STARTSCRIPT="$SCRIPT_DIR/start_xrtg.sh"
+STARTDEST="/usr/X/bin/startxrtg"
+
+if [ -f "$STARTSCRIPT" ]; then
+    cp "$STARTSCRIPT" "$STARTDEST"
+    chmod 755 "$STARTDEST"
+    echo "  installed: $STARTDEST"
+else
+    echo "  skipped:   start_xrtg.sh not found next to install-xrtg.sh"
+fi
+
+# --------------------------------------------------------------------------
 # Done
 # --------------------------------------------------------------------------
 
@@ -125,9 +143,9 @@ echo ""
 echo "=== Xrtg installed ==="
 echo ""
 echo "To start the server (from telnet or a root console shell):"
-echo "  sh /path/to/start_xrtg.sh"
+echo "  startxrtg"
 echo ""
-echo "  start_xrtg.sh starts Xrtg, then launches twm, xclock, and two xterms."
+echo "  startxrtg starts Xrtg, then launches twm, xclock, and two xterms."
 echo "  All clients use nohup so they survive when the calling shell session closes."
 echo ""
 echo "To verify it is running:"
