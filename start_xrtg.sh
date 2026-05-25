@@ -48,6 +48,12 @@ start_clients() {
     sleep 1
     nohup xclock -geometry 100x100+650+450 > /tmp/xclock.log 2>&1 &
     sleep 1
+
+    # Apply keyboard layout if /root/.Xmodmap exists.
+    # Runs here (after first clients) so STREAMS :0 socket is ready.
+    if [ -f /root/.Xmodmap ]; then
+        xmodmap /root/.Xmodmap && echo "Keyboard layout applied from /root/.Xmodmap"
+    fi
 }
 
 # =============================================================================
@@ -69,10 +75,10 @@ echo "Xrtg started  (pid $XPID, log: /tmp/xrtg.log)"
 sleep 4
 
 # Check the server came up.
-if ! kill -0 "$XPID" 2>/dev/null; then
+kill -0 "$XPID" 2>/dev/null || {
     echo "ERROR: Xrtg did not start -- check /tmp/xrtg.log" >&2
     exit 1
-fi
+}
 
 # Verify the chosen window manager exists before trying to run it.
 if [ ! -x "$WM" ]; then

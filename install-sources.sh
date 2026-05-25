@@ -297,6 +297,23 @@ echo ""
 # Done
 # --------------------------------------------------------------------------
 
+echo "=== Modified files: clients/xterm/ ==="
+
+install_modified clients/xterm/input.c
+
+echo ""
+
+# --------------------------------------------------------------------------
+# Xterm build note
+# --------------------------------------------------------------------------
+
+if [ ! -d clients/xterm ]; then
+    echo "  NOTE: clients/xterm/ not found -- xterm patching skipped"
+    echo "        Copy input.c from the repo to /usr/x11r5/clients/xterm/ manually."
+fi
+
+echo ""
+
 echo "=== Generating Makefiles ==="
 
 # extensions/server/Makefile: the vanilla file was generated with BuildPexExt
@@ -352,6 +369,9 @@ fi
 echo "  cd /usr/x11r5/fonts/lib/font && make"
 echo "  cd /usr/x11r5/extensions/server && make"
 echo "  cd /usr/x11r5/server && make Makefiles && make depend && make Xrtg"
+echo ""
+echo "To rebuild xterm with Latin-1 keyboard fix:"
+echo "  cd /usr/x11r5/clients/xterm && make xterm && cp xterm /usr/X/bin/xterm"
 echo ""
 echo "If you need to regenerate server/Makefile manually:"
 echo "  cd /usr/x11r5/server"
