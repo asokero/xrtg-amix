@@ -24,12 +24,15 @@
 # Window manager.  Uncomment the one you want to use.
 WM=/usr/X/bin/twm
 # WM=/usr/X/bin/olwm          # OpenLook Window Manager
-# WM=/usr/X/bin/twm.r4        # Alternative twm build
-# WM=/usr/X/bin/mwm           # Motif Window Manager
+# WM=/usr/X/bin/tvtwm        # Alternative twm build
 
 # X server binary and display number.
 XSERVER=/usr/bin/X11/Xrtg
 DISPLAY=:0
+
+# Video mode.  Supported: 640x480 800x600 1024x768 1280x720 1280x1024 1920x1080
+# Leave empty to use the default (800x600).
+MODE=
 
 # =============================================================================
 # Session clients
@@ -67,7 +70,11 @@ export PATH DISPLAY
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null
 
 # Start the X server.  nohup keeps it alive if the calling shell exits.
-nohup "$XSERVER" "$DISPLAY" -pn > /tmp/xrtg.log 2>&1 &
+if [ -n "$MODE" ]; then
+    nohup "$XSERVER" "$DISPLAY" -mode "$MODE" -pn > /tmp/xrtg.log 2>&1 &
+else
+    nohup "$XSERVER" "$DISPLAY" -pn > /tmp/xrtg.log 2>&1 &
+fi
 XPID=$!
 echo "Xrtg started  (pid $XPID, log: /tmp/xrtg.log)"
 

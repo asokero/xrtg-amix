@@ -104,6 +104,7 @@ install_modified server/Imakefile
 install_modified server/ddx/amix/Imakefile
 install_modified server/ddx/amix/amixInit.c
 install_modified server/ddx/amix/amixCursor.c
+install_modified server/ddx/amix/amixIo.c
 
 echo ""
 
@@ -383,6 +384,7 @@ echo "  cp server/Imakefile.orig server/Imakefile"
 echo "  cp server/ddx/amix/Imakefile.orig server/ddx/amix/Imakefile"
 echo "  cp server/ddx/amix/amixInit.c.orig server/ddx/amix/amixInit.c"
 echo "  cp server/ddx/amix/amixCursor.c.orig server/ddx/amix/amixCursor.c"
+echo "  cp server/ddx/amix/amixIo.c.orig server/ddx/amix/amixIo.c"
 echo "  rm -f config/Imake.rules config/noop.rules config/sv4Lib.rules config/amix.rules"
 echo "  rm -f util/makedepend/makedepend"
 echo "  rm -f X11"

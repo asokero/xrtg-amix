@@ -159,10 +159,10 @@ char    **argv;
 
     pScreen->devPrivates[rtgScreenIndex].ptr = (pointer) pRTG;
 
-    /* Static geometry for VA2000 800x600x16 */
-    pRTG->width        = VA2000_WIDTH;
-    pRTG->height       = VA2000_HEIGHT;
-    pRTG->pitch        = VA2000_PITCH;
+    /* Screen geometry from selected mode */
+    pRTG->width        = va2000_selected_mode->w;
+    pRTG->height       = va2000_selected_mode->h;
+    pRTG->pitch        = va2000_selected_mode->w * 2;
     pRTG->bitsPerPixel = VA2000_BPP;
     pRTG->depth        = VA2000_DEPTH;
     pRTG->fbOffset     = VA2000_FB_OFFSET;
@@ -348,10 +348,10 @@ char      **argv;
         amixFbs[index].mapped = FALSE;
     }
 
-    amixFbs[index].bp.width  = VA2000_WIDTH;
-    amixFbs[index].bp.height = VA2000_HEIGHT;
+    amixFbs[index].bp.width  = va2000_selected_mode->w;
+    amixFbs[index].bp.height = va2000_selected_mode->h;
 
-    ErrorF("rtgProbe: ok, width=%d height=%d\n", VA2000_WIDTH, VA2000_HEIGHT);
+    ErrorF("rtgProbe: ok, width=%d height=%d\n", va2000_selected_mode->w, va2000_selected_mode->h);
     return TRUE;
 }
 

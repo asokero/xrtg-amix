@@ -37,7 +37,7 @@
 #define min(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
-#define VA2000_STRIDE  (VA2000_PITCH / 2)   /* shorts (pixels) per scanline */
+#define VA2000_STRIDE  (va2000_selected_mode->w)  /* pixels per scanline */
 
 /* ---------------------------------------------------------------------- */
 /* Hardware blitter helpers                                                 */
@@ -52,9 +52,9 @@
 ** Formula verified against blit_test4.c (the authoritative reference).
 */
 #define BLITSRC_HI(y) \
-    ((unsigned short)(((unsigned long)(y) * VA2000_WIDTH) >> 16))
+    ((unsigned short)(((unsigned long)(y) * va2000_selected_mode->w) >> 16))
 #define BLITSRC_LO(y) \
-    ((unsigned short)(((unsigned long)(y) * VA2000_WIDTH) & 0xffff))
+    ((unsigned short)(((unsigned long)(y) * va2000_selected_mode->w) & 0xffff))
 
 /*
 ** blitFill — fill a screen rectangle with a solid colour via hardware.
@@ -69,7 +69,7 @@ unsigned short x1, y1, x2, y2, color;
     BLITWAIT(regBase);
     VA2000_WRITEREG(regBase, VA2000_BLT_SRC_HI,   BLITSRC_HI(y1));
     VA2000_WRITEREG(regBase, VA2000_BLT_SRC_LO,   BLITSRC_LO(y1));
-    VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  VA2000_WIDTH);
+    VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  va2000_selected_mode->w);
     VA2000_WRITEREG(regBase, VA2000_BLT_COLORMODE, 1);
     VA2000_WRITEREG(regBase, VA2000_BLT_RGB16,     color);
     VA2000_WRITEREG(regBase, VA2000_BLT_X1,        x1);
@@ -105,7 +105,7 @@ unsigned long  dbase, sbase;     /* SDRAM word addr of dest/src starting row */
     VA2000_WRITEREG(regBase, VA2000_BLT_SRC_LO,   (unsigned short)(dbase & 0xffff));
     VA2000_WRITEREG(regBase, VA2000_BLT_SRC2_HI,  (unsigned short)(sbase >> 16));
     VA2000_WRITEREG(regBase, VA2000_BLT_SRC2_LO,  (unsigned short)(sbase & 0xffff));
-    VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  VA2000_WIDTH);
+    VA2000_WRITEREG(regBase, VA2000_BLT_ROWPITCH,  va2000_selected_mode->w);
     VA2000_WRITEREG(regBase, VA2000_BLT_COLORMODE, 1);
     VA2000_WRITEREG(regBase, VA2000_BLT_X1,        x1);
     VA2000_WRITEREG(regBase, VA2000_BLT_Y1,        y1);
@@ -162,8 +162,8 @@ int             srcx, srcy, w, h, dstx, dsty;
     if (dsty < srcy || (dsty == srcy && dstx <= srcx))
     {
         /* Forward: top row first, left column first */
-        dbase = (unsigned long) dsty * VA2000_WIDTH;
-        sbase = (unsigned long) srcy * VA2000_WIDTH;
+        dbase = (unsigned long) dsty * va2000_selected_mode->w;
+        sbase = (unsigned long) srcy * va2000_selected_mode->w;
         blitCopy(regBase,
             (unsigned short) dstx,       (unsigned short) dsty,
             (unsigned short)(dstx+w-1),  (unsigned short)(dsty+h-1),
@@ -174,8 +174,8 @@ int             srcx, srcy, w, h, dstx, dsty;
     else
     {
         /* Reverse: bottom row first, right column first */
-        dbase = (unsigned long)(dsty + h - 1) * VA2000_WIDTH;
-        sbase = (unsigned long)(srcy + h - 1) * VA2000_WIDTH;
+        dbase = (unsigned long)(dsty + h - 1) * va2000_selected_mode->w;
+        sbase = (unsigned long)(srcy + h - 1) * va2000_selected_mode->w;
         blitCopy(regBase,
             (unsigned short)(dstx+w-1),  (unsigned short)(dsty+h-1),
             (unsigned short) dstx,       (unsigned short) dsty,

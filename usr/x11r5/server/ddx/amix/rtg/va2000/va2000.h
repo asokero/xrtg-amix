@@ -24,9 +24,25 @@
 #define VA2000_FB_OFFSET    0x10000         /* framebuffer within mmap      */
 
 /* ======================================================================= */
-/* = Default video mode: 800x600x16                                      = */
+/* = Video mode table                                                    = */
 /* ======================================================================= */
 
+typedef struct _VA2000ModeRec {
+    char *name;     /* "800x600" etc.                                       */
+    int   w;        /* width in pixels                                      */
+    int   h;        /* height in pixels                                     */
+    int   hss;      /* H sync start (HTOTAL register)                       */
+    int   hse;      /* H sync end   (HSYNC_START register)                  */
+    int   hmax;     /* H max        (HSYNC_END register)                    */
+    int   vss;      /* V sync start (VTOTAL register)                       */
+    int   vse;      /* V sync end   (VSYNC_START register)                  */
+    int   vmax;     /* V max        (VSYNC_END register)                    */
+    int   clk;      /* pixel clock: 0=75MHz, 1=40MHz, 3=100MHz             */
+} VA2000ModeRec, *VA2000ModePtr;
+
+extern VA2000ModePtr va2000_selected_mode; /* set by -mode WxH, default 800x600 */
+
+/* Compile-time default: 800x600 — used only as fallback constants */
 #define VA2000_WIDTH        800
 #define VA2000_HEIGHT       600
 #define VA2000_BPP          16
@@ -120,7 +136,7 @@
 ** Address of pixel (x, y) in the framebuffer.
 */
 #define VA2000_PIXADDR(fbbase, x, y) \
-    ((unsigned short *)(fbbase) + (y) * (VA2000_PITCH / 2) + (x))
+    ((unsigned short *)(fbbase) + (y) * va2000_selected_mode->w + (x))
 
 /*
 ** Write / read a register in the control area (before the framebuffer).
@@ -183,6 +199,7 @@ typedef struct _va2000ScreenRec {
 Bool    va2000Probe();
 Bool    va2000InitHW();
 void    va2000CloseHW();
+Bool    va2000SetMode();
 
 /* va2000screen.c — screen lifecycle and GC */
 Bool    va2000ScreenInit();
