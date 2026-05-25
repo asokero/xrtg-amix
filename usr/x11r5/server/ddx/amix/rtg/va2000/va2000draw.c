@@ -411,7 +411,8 @@ xRectangle *prects;
     unsigned short *base   = drawBase(pDraw, pRTG);
     int             stride = drawStride(pDraw);
     RegionPtr       clip   = rtgGCClip(pGC);
-    int             useHW  = (pDraw->type == DRAWABLE_WINDOW);
+    int             useHW  = (pDraw->type == DRAWABLE_WINDOW &&
+                              pGC->alu == GXcopy);
     BoxPtr          pbox;
     int             nbox;
     int             xorg   = pDraw->x;

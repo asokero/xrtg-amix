@@ -294,7 +294,7 @@ DrawablePtr   pDraw;
     pGC->ops->PolyRectangle = miPolyRectangle;
     pGC->ops->PolyArc       = miPolyArc;
     pGC->ops->FillPolygon   = miFillPolygon;
-    pGC->ops->PolyFillRect  = miPolyFillRect;
+    pGC->ops->PolyFillRect  = va2000SolidRect;
     pGC->ops->PolyFillArc   = miPolyFillArc;
     pGC->ops->PolyText8     = miPolyText8;
     pGC->ops->PolyText16    = miPolyText16;
