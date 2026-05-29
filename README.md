@@ -33,7 +33,9 @@ to explore how far a modern RTG card can be pushed under a 1991 Unix on
 
 - **Server compiles and links** on AMIX SVR4
 - **X server starts** — passes font path, initialises screen, accepts connections
-- **VA2000 display activates** — 800×600 RGB565 TrueColor, correct colours
+- **VA2000 display activates** — RGB565 TrueColor, correct colours
+- **Resolution selection** — `-mode WxH` flag selects from six supported modes
+  (640×480, 800×600, 1024×768, 1280×720, 1280×1024, 1920×1080); default 800×600
 - **Clean framebuffer start** — VRAM cleared to black on init, no garbage pixels
 - **Keyboard and mouse input** — routed via the AMIX screen manager
   (`OpenScreen` / `SIOCACTIVATE`); twm responds to mouse and keyboard normally
@@ -41,6 +43,9 @@ to explore how far a modern RTG card can be pushed under a 1991 Unix on
 - **Multiple clients** — tested with twm, xclock, xterm (two instances)
 - **Hardware blitter — PaintWindow** — window background fills use the VA2000
   hardware blitter (`blitFill`), which is noticeably faster than CPU fills
+- **Hardware blitter — CopyWindow** — screen-to-screen window-move copies use
+  the VA2000 hardware blitter (`blitCopy`); register layout verified against the
+  FPGA Verilog source
 - **Software cursor** — miDC cursor rendered correctly (no hardware sprite on
   VA2000)
 - **Server reset** — survives client-side server resets across server
@@ -48,20 +53,15 @@ to explore how far a modern RTG card can be pushed under a 1991 Unix on
 
 ### Not Yet Implemented / Known Issues
 
-- **Hardware blitter — SolidRect** — PolyFillRect (used by twm for title bars
-  and borders) falls back to CPU fills. Hardware acceleration here caused a
-  BLITWAIT hang during testing; root cause not yet determined.
-- **Hardware blitter — CopyWindow** — screen-to-screen window-move copies use
-  CPU `memmove`. The `blitCopy` function is implemented but not yet enabled.
+- **Hardware blitter — SolidRect** — PolyFillRect (used by widget toolkits for
+  button and border fills) falls back to CPU fills. Hardware acceleration here
+  caused a BLITWAIT hang during testing; root cause not yet determined.
 - **Graphical expose artefacts** — when windows are moved, small remnants can
   appear. They clear when another window is moved over the area or (in xterm)
   when text is typed over it. This is normal X11 behaviour without backing
-  store; a background of `BackgroundPixel` on the root window (e.g. via
-  `xsetroot -solid black` after twm starts) reduces visible artefacts.
+  store.
 - **No hardware cursor sprite** — VA2000 has no hardware cursor; the FPGA
   source contains a placeholder `display_sprite` register that is never driven.
-- **Fixed resolution** — 800×600 is hardcoded. Resolution selection via a
-  config file or command-line flag is planned.
 
 ---
 
@@ -99,6 +99,7 @@ usr/x11r5/
       Imakefile                  amix DDX Imakefile — adds rtg/ subdir
       amixInit.c                 InitOutput() — RTG device path pre-selection
       amixCursor.c               Cursor init — TIGA guard to avoid link error
+      amixIo.c                   ddxProcessArgument — adds -mode WxH flag
 
     ddx/amix/rtg/
       Imakefile                  RTG layer Imakefile
@@ -162,12 +163,22 @@ sh /path/to/install-xrtg.sh
 From a root shell (telnet or console):
 
 ```sh
-sh /path/to/start_xrtg.sh
+startxrtg
 ```
 
-This starts Xrtg, waits for it to initialise, then launches twm, xclock,
-and two xterm windows. All clients are run with `nohup` so they survive
-when the calling shell session closes.
+`install-xrtg.sh` installs `startxrtg` to `/usr/X/bin/`. It starts Xrtg,
+waits for it to initialise, then launches twm, xclock, and two xterm windows.
+All clients are run with `nohup` so they survive when the calling shell
+session closes.
+
+To select a video mode, edit the `MODE=` line in `/usr/X/bin/startxrtg`:
+
+```sh
+MODE=1280x720
+```
+
+Supported modes: `640x480`, `800x600` (default), `1024x768`, `1280x720`,
+`1280x1024`, `1920x1080`.
 
 ---
 
@@ -228,7 +239,7 @@ Window background fills (`PaintWindow`) use the VA2000 hardware blitter for
 source address for row `y` is:
 
 ```c
-src = (unsigned long)y * VA2000_WIDTH;   /* SDRAM word address, no fb_off */
+src = (unsigned long)y * screen_width;  /* SDRAM word address, no fb_off */
 SRC_HI = src >> 16;
 SRC_LO = src & 0xffff;                  /* full 16 bits, no masking */
 ```
@@ -243,7 +254,7 @@ The blitter register sequence (fill mode):
 ```
 BLT_SRC_HI  = src >> 16
 BLT_SRC_LO  = src & 0xffff
-BLT_ROWPITCH = VA2000_WIDTH   (800 pixels)
+BLT_ROWPITCH = screen_width
 BLT_COLORMODE = 1             (16-bit)
 BLT_RGB16   = fill colour
 BLT_X1/Y1   = top-left (inclusive)
