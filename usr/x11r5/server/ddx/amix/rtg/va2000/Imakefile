@@ -9,7 +9,8 @@ OBJS = va2000hw.o va2000screen.o va2000draw.o va2000win.o \
 STD_DEFINES = ServerDefines -DRTG -DVA2000
 CDEBUGFLAGS = -g -O
    INCLUDES = -I. -I.. -I../.. -I../../../../include -I$(INCLUDESRC) \
-              -I../../../mi -I../../../mfb -I$(FONTSRC)/include
+              -I../../../mi -I../../../mfb -I$(FONTSRC)/include \
+              -I/usr/include
 
 NormalLibraryObjectRule()
 NormalLibraryTarget(va2000, $(OBJS))

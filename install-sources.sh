@@ -265,19 +265,44 @@ echo ""
 # --------------------------------------------------------------------------
 # 9. Pre-build checks
 #
-# libfont.a and libext.a must exist before "make Xrtg" runs.  They are not
-# pre-installed anywhere — they must be compiled from source.  Warn here if
-# either is missing so the user knows what to do next.
+# libfont.a must exist before "make Xrtg" runs.  The vanilla Makefile for
+# fonts/lib/font/ lists DONE-stamp-file targets (bitmap/DONE etc.) that have
+# no build rule, causing a fatal error with SVR4 make when run directly.
+#
+# Workaround: build each subdirectory explicitly, touch the DONE stamp, then
+# let the top-level make assemble libfont.a from the resulting object files.
+#
+# libext.a must also exist; it builds cleanly with a plain "make".
 # --------------------------------------------------------------------------
+
+echo "=== Building font library ==="
+
+if [ ! -f fonts/lib/font/libfont.a ]; then
+    echo "  libfont.a not found — building..."
+    echo "  (SVR4 make workaround: building subdirectories before top-level make)"
+    echo ""
+    for subdir in bitmap fontfile fc Speedo util; do
+        if [ -d "fonts/lib/font/$subdir" ]; then
+            echo "  making fonts/lib/font/$subdir ..."
+            (cd "fonts/lib/font/$subdir" && make)
+            touch "fonts/lib/font/$subdir/DONE"
+        fi
+    done
+    echo "  linking fonts/lib/font/libfont.a ..."
+    (cd fonts/lib/font && make)
+    echo "  ok:  fonts/lib/font/libfont.a"
+else
+    echo "  ok:  fonts/lib/font/libfont.a (already built)"
+fi
+
+echo ""
 
 echo "=== Pre-build checks ==="
 
 MISSING_LIBS=0
 
 if [ ! -f fonts/lib/font/libfont.a ]; then
-    echo ""
-    echo "  NOTE: fonts/lib/font/libfont.a not found — must be built before make Xrtg"
-    echo "    cd /usr/x11r5/fonts/lib/font && make"
+    echo "  ERROR: fonts/lib/font/libfont.a still missing after build attempt."
     MISSING_LIBS=1
 else
     echo "  ok:  fonts/lib/font/libfont.a"
@@ -329,6 +354,13 @@ cd ../..
 cd server
 /usr/x11r5/config/imake -I../config -DTOPDIR=/usr/x11r5 -DCURDIR=/usr/x11r5/server
 echo "  done: server/Makefile"
+
+# Regenerate all subdirectory Makefiles from their Imakefiles.
+# This ensures that the fixed va2000/Imakefile (with -I/usr/include) is
+# picked up before make depend runs, so makedepend writes absolute paths for
+# system headers and SVR4 make does not try to build sys/types.h as a target.
+make Makefiles
+echo "  done: server subdirectory Makefiles"
 cd ..
 
 echo ""
@@ -361,18 +393,16 @@ fi
 echo ""
 echo "=== Sources installed ==="
 echo ""
-echo "Build commands (run from /usr/x11r5):"
+echo "Build commands:"
 echo ""
 if [ "$MISSING_LIBS" = "1" ]; then
 echo "  *** Build these first — they must exist before the server link: ***"
 echo ""
-fi
-echo "  cd /usr/x11r5/fonts/lib/font && make"
 echo "  cd /usr/x11r5/extensions/server && make"
-echo "  cd /usr/x11r5/server && make Makefiles && make depend && make Xrtg"
 echo ""
-echo "To rebuild xterm with Latin-1 keyboard fix:"
-echo "  cd /usr/x11r5/clients/xterm && make xterm && cp xterm /usr/X/bin/xterm"
+fi
+echo "  cd /usr/x11r5/server && make depend && make Xrtg"
+echo "  (make Makefiles was already run by this script)"
 echo ""
 echo "If you need to regenerate server/Makefile manually:"
 echo "  cd /usr/x11r5/server"

@@ -5,6 +5,10 @@
 Xrtg is an X11R5 server for Amiga UNIX (AMIX) SVR4 that drives the MNT VA2000
 RTG graphics card directly — bypassing the native Amiga display chipset.
 
+This is my my very (un)reasonable vibe-coding adventure. The goal is to explore,
+and see how far the combination of old hardware, old Unix, modern AI tools can 
+go.
+
 This is a companion project to
 [va2000-amix](https://github.com/asokero/va2000-amix), which provides the
 kernel device driver for the VA2000. Xrtg builds on top of that driver to run
@@ -18,10 +22,6 @@ Klaus Burkert's Xsvga (from Gateway! Volume 2) is a parallel project doing
 the same thing for Cirrus Logic-based RTG cards. Xsvga demonstrated that
 building an RTG X11 server on vanilla AMIX is possible and served as
 inspiration for this project.
-
-This is a vibe-coding adventure in a very unreasonable direction. The goal is
-to explore how far a modern RTG card can be pushed under a 1991 Unix on
-35-year-old hardware.
 
 ---
 
@@ -138,18 +138,20 @@ cd /usr/x11r5
 sh /path/to/install-sources.sh /path/to/xrtg-amix
 ```
 
-### 2. Build prerequisite libraries
+### 2. Build prerequisite library
 
 ```sh
-cd /usr/x11r5/fonts/lib/font && make
 cd /usr/x11r5/extensions/server && make
 ```
+
+`install-sources.sh` builds `fonts/lib/font/libfont.a` and runs `make Makefiles`
+in the server tree automatically — these steps are not needed manually.
 
 ### 3. Build Xrtg
 
 ```sh
 cd /usr/x11r5/server
-make Makefiles && make depend && make Xrtg
+make depend && make Xrtg
 ```
 
 ### 4. Install the binary
@@ -318,3 +320,5 @@ MIT/X11 license terms. The AMIX DDX framework carries its original Regents
 of the University of California and Sun Microsystems copyright.
 
 See individual source file headers for details.
+
+-Antti Sokero 2026
