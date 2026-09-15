@@ -105,6 +105,7 @@ install_modified server/ddx/amix/Imakefile
 install_modified server/ddx/amix/amixInit.c
 install_modified server/ddx/amix/amixCursor.c
 install_modified server/ddx/amix/amixIo.c
+install_modified server/ddx/amix/amixKbd.c
 
 echo ""
 
@@ -222,6 +223,8 @@ install_new server/ddx/amix/rtg/va2000/va2000.h
 install_new server/ddx/amix/rtg/va2000/va2000hw.c
 install_new server/ddx/amix/rtg/va2000/va2000screen.c
 install_new server/ddx/amix/rtg/va2000/va2000draw.c
+install_new server/ddx/amix/rtg/va2000/va2000text.c
+install_new server/ddx/amix/rtg/va2000/va2000tile.c
 install_new server/ddx/amix/rtg/va2000/va2000win.c
 install_new server/ddx/amix/rtg/va2000/va2000cmap.c
 install_new server/ddx/amix/rtg/va2000/va2000pix.c
@@ -415,6 +418,7 @@ echo "  cp server/ddx/amix/Imakefile.orig server/ddx/amix/Imakefile"
 echo "  cp server/ddx/amix/amixInit.c.orig server/ddx/amix/amixInit.c"
 echo "  cp server/ddx/amix/amixCursor.c.orig server/ddx/amix/amixCursor.c"
 echo "  cp server/ddx/amix/amixIo.c.orig server/ddx/amix/amixIo.c"
+echo "  cp server/ddx/amix/amixKbd.c.orig server/ddx/amix/amixKbd.c"
 echo "  rm -f config/Imake.rules config/noop.rules config/sv4Lib.rules config/amix.rules"
 echo "  rm -f util/makedepend/makedepend"
 echo "  rm -f X11"

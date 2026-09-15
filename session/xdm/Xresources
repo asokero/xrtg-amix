@@ -1,0 +1,38 @@
+! X11R5 xdm login widget, matched to the Xrtg twm colour palette.
+
+xlogin*login.translations: #override\
+        <Key>F1: set-session-argument(default) finish-field()\n\
+        <Key>F2: set-session-argument(amiwm) finish-field()\n\
+        <Key>F3: set-session-argument(openlook) finish-field()\n\
+        <Key>F4: set-session-argument(failsafe) finish-field()\n\
+        <Key>F5: console-request()\n\
+        <Key>Escape: console-cancel()\n\
+        <Key>Return: console-confirm() set-session-argument() finish-field()\n\
+        Ctrl<Key>j: set-session-argument() finish-field()\n\
+        Ctrl<Key>m: set-session-argument() finish-field()\n\
+        <Key>KP_Enter: set-session-argument() finish-field()
+
+xlogin.Login.width:       480
+xlogin.Login.height:      230
+xlogin.Login.x:           400
+xlogin.Login.y:           245
+
+xlogin*borderWidth:       2
+xlogin*borderColor:       #3a4451
+xlogin*Foreground:        #c9d1d9
+xlogin*Background:        #10161c
+xlogin*greeting:          Amiga UNIX - Xrtg / VA2000
+xlogin*greetFont:         *-helvetica-bold-r-normal-*-180-*
+xlogin*greetColor:        #e8913a
+xlogin*font:              -misc-fixed-medium-r-normal--13-*-*-*-*-*-*-*
+xlogin*promptFont:        -misc-fixed-medium-r-normal--13-*-*-*-*-*-*-*
+xlogin*promptColor:       #c9d1d9
+xlogin*failFont:          -misc-fixed-bold-r-normal--13-*-*-*-*-*-*-*
+xlogin*failColor:         #ff6b6b
+xlogin*failTimeout:       5
+xlogin*namePrompt:        Login:
+xlogin*passwdPrompt:      Password:
+xlogin*allowTextConsole:  true
+xlogin*sessionHint:       F1: twm/tvtwm   F2: amiwm   F3: Open Look
+xlogin*sessionHint2:      F4: failsafe   F5: text console
+xlogin*fail:              Login incorrect

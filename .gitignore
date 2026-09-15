@@ -1,0 +1,53 @@
+# Local, machine-specific notes.  CLAUDE.md on the development machine holds
+# the test Amiga's network address and the NFS/SMB mount points used to move
+# files to it.  None of that belongs in a public repository, and an accidental
+# `git add -A` is all it would take.  Keep it out structurally rather than by
+# remembering.
+CLAUDE.md
+
+# Anything explicitly marked as local scratch
+*.local
+*.local.*
+local/
+
+# A machine-local XDM backdrop may be staged here for transfer, but the
+# currently used image is not distributable as part of this repository.
+session/backdrop.local.*
+
+# Authentication state and private configuration (never release these).
+.Xauthority
+.Xauthority-*
+Xrtg-auth
+Xrtg-auth.*
+Xrtg-seed
+Xrtg-seed.*
+private-seed
+.env
+.env.*
+!.env.example
+id_rsa
+id_ed25519
+*.key
+*.p12
+*.pfx
+
+# Local logs, transfer packages and interpreter caches.
+*.log
+.xsession-errors*
+*.tar
+*.tar.gz
+*.tgz
+__pycache__/
+
+# Build products, in case anyone builds inside the tree
+*.o
+*.a
+Xrtg
+/xdm
+core
+
+# Editor and OS noise
+*~
+*.orig
+*.rej
+.DS_Store

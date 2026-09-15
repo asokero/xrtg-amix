@@ -1,0 +1,93 @@
+--- Login.c.orig
++++ Login.c
+@@ -67,6 +67,10 @@
+ 	offset(namePrompt), XtRString, "Login:  "},
+     {XtNpasswdPrompt, XtCNamePrompt, XtRString, sizeof (char *),
+ 	offset(passwdPrompt), XtRString, "Password:  "},
++    {"sessionHint", "SessionHint", XtRString, sizeof (char *),
++        offset(sessionHint), XtRString, ""},
++    {"sessionHint2", "SessionHint", XtRString, sizeof (char *),
++        offset(sessionHint2), XtRString, ""},
+     {XtNfail, XtCFail, XtRString, sizeof (char *),
+ 	offset(fail), XtRString, "Login incorrect"},
+     {XtNfailTimeout, XtCFailTimeout, XtRInt, sizeof (int),
+@@ -294,6 +298,28 @@
+ 		    w->login.fail, strlen (w->login.fail));
+ }
+ 
++/* Footer text is independent of PROMPT_W and the authentication state.
++ * Keep the failure-message row free, even while no failure is displayed. */
++static int
++HintWidth (w, text)
++    LoginWidget w;
++    char *text;
++{
++    return text ? XTextWidth (w->login.promptFont, text, strlen (text)) : 0;
++}
++
++static void
++DrawHint (w, text, row)
++    LoginWidget w;
++    char *text;
++    int row;
++{
++    if (text && text[0])
++        XDrawString (XtDisplay (w), XtWindow (w), w->login.promptGC,
++            (int)(w->core.width - HintWidth (w, text)) / 2,
++            FAIL_Y(w) + (row + 2) * Y_INC(w), text, strlen (text));
++}
++
+ static void
+ draw_it (w)
+     LoginWidget	w;
+@@ -312,6 +338,8 @@
+ 		w->login.passwdPrompt, strlen (w->login.passwdPrompt));
+ #endif /* NO_PASSWORD_HACK */
+     RedrawFail (w);
++    DrawHint (w, w->login.sessionHint, 0);
++    DrawHint (w, w->login.sessionHint2, 1);
+     DrawName (w, 0);
+     XorCursor (w);
+     /*
+@@ -794,11 +822,18 @@
+     w->login.cursor = 0;
+     w->login.failUp = 0;
+     if (w->core.width == 0)
+-	w->core.width = max (GREET_W(w), FAIL_W(w)) + PAD_X(w);
++        w->core.width = max (max (GREET_W(w), FAIL_W(w)),
++            max (HintWidth (w, w->login.sessionHint),
++                 HintWidth (w, w->login.sessionHint2))) + PAD_X(w);
+     if (w->core.height == 0) {
+ 	int fy = FAIL_Y(w);
+ 	int pady = PAD_Y(w);
+ 
++        if (w->login.sessionHint2 && w->login.sessionHint2[0])
++            fy += 3 * Y_INC(w);
++        else if (w->login.sessionHint && w->login.sessionHint[0])
++            fy += 2 * Y_INC(w);
++
+ 	w->core.height = fy + pady;	/* for stupid compilers */
+     }
+     if ((x = w->core.x) == -1)
+@@ -853,7 +888,9 @@
+     
+     currentL = (LoginWidget) current;
+     newL = (LoginWidget) new;
+-    if (GREETING (currentL) != GREETING (newL))
++    if (currentL->login.sessionHint != newL->login.sessionHint ||
++        currentL->login.sessionHint2 != newL->login.sessionHint2 ||
++        GREETING (currentL) != GREETING (newL))
+ 	return True;
+     return False;
+ }
+--- LoginP.h.orig
++++ LoginP.h
+@@ -48,6 +48,8 @@
+ 	char		*unsecure_greet;/* message displayed when insecure */
+ 	char		*namePrompt;	/* name prompt */
+ 	char		*passwdPrompt;	/* password prompt */
++	char		*sessionHint;	/* optional footer, first line */
++	char		*sessionHint2;	/* optional footer, second line */
+ 	char		*fail;		/* failure message */
+ 	XFontStruct	*font;		/* font for text */
+ 	XFontStruct	*promptFont;	/* font for prompts */

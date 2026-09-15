@@ -27,7 +27,10 @@ inspiration for this project.
 
 ## Status (May 2026)
 
-**Tested on:** Amiga 3000, 68030, AMIX SVR4 2.1p2a, MNT VA2000 fw1.9.0b2
+**Tested hardware (updated September 2026):** Amiga 3000 with 68030, 68040
+and 68060, running AMIX SVR4 2.1p2a. Earlier testing used the MNT VA2000 in
+Zorro II mode (fw1.9.0b2); 68040 and 68060 configurations have also been tested
+with the VA2000 in Zorro III mode.
 
 ### Working
 
@@ -67,9 +70,12 @@ inspiration for this project.
 
 ## Hardware Requirements
 
-- Amiga with Zorro II slots (tested on Amiga 3000, 68030)
-- MNT VA2000 graphics card
+- Amiga with Zorro II or Zorro III slots (tested on Amiga 3000 with
+  68030, 68040 and 68060)
+- MNT VA2000 graphics card with firmware appropriate for the selected bus mode;
+  both Zorro II and Zorro III modes have been tested
 - Amiga UNIX (AMIX) System V Release 4.0, version 2.1p2a
+  (68040/68060 systems require an AMIX kernel with support for their CPU)
 - VA2000 kernel driver installed and `/dev/va2000` accessible
   (see [va2000-amix](https://github.com/asokero/va2000-amix))
 - Vanilla AMIX X11R5 source tree installed at `/usr/x11r5`
@@ -181,6 +187,229 @@ MODE=1280x720
 
 Supported modes: `640x480`, `800x600` (default), `1024x768`, `1280x720`,
 `1280x1024`, `1920x1080`.
+
+The server maps what the driver says the board has rather than a fixed
+2 MB, so the mode table is no longer limited by the mapping. AutoConfig
+reports a 4 MB aperture in Zorro II and 32 MB in Zorro III, which means
+`1280x1024` (2560 KB) works on either and `1920x1080` (4050 KB) needs
+Zorro III. A mode the board cannot hold is refused with a message naming
+both figures.
+
+---
+
+## Runtime options (optimization branch)
+
+Work on the `optimization` branch is guarded by runtime switches rather than
+`#ifdef`s, so one binary serves both target machines — a stock A3000UX
+(68030, VA2000 in Zorro II firmware) and a 68040/060 kernel with the card in
+Zorro III — and every fast path stays reachable on either one.
+
+| Option | Meaning |
+|--------|---------|
+| `-compat` | Turn every RTG fast path off and use the original code paths. First thing to try when something renders wrong. |
+| `-bstore` | Enable backing store and save-unders. Off by default: one 800x600 window costs 960 KB, which matters on a 4–8 MB machine. |
+| `-bus z2\|z3` | Override bus autodetection. Normally derived from the aperture size the driver reports. |
+| `-blitmin N` | Use the CPU instead of the blitter for rectangles smaller than N pixels of area. `0` (default) always uses the blitter. |
+
+Note that `-bs`, `-su` and `-wm` belong to the X server core and mean
+something else; `-bstore` is the RTG option.
+
+At startup Xrtg logs the configuration it detected. This is the first thing
+to ask for in a bug report:
+
+```
+va2000: firmware 9, framebuffer 4032 KB, bus Zorro II
+va2000: options 0x00af, blitmin 0, mapping 1984 KB
+```
+
+### Blitter timeouts
+
+The wait for the blitter is bounded. An unbounded wait was how the known
+`PolyFillRect` hang locked up the whole server, and recovering from that
+needed a cold boot because it also wedged the AMIX screen manager. Xrtg now
+gives up after a bound no real blit can reach, logs it, and continues:
+
+```
+va2000: blitter timeout, enable=0x1 (giving up)
+va2000: 3 blitter timeouts this generation
+```
+
+A visual artefact is possible after a timeout; a repaint clears it. Any
+non-zero count is worth reporting — it means the status register did not
+clear when it should have.
+
+### Session appearance
+
+`session/Xdefaults` and `session/twmrc` are a starting point; copy them to
+`/root/.Xdefaults` and `/root/.twmrc`. `startxrtg` loads the first with
+`xrdb` and sets the root window and pointer before starting any client.
+
+Two entries there are about speed rather than looks, and on this machine
+they matter more than anything in the twmrc:
+
+- `XTerm*jumpScroll: true` — redraw once after a burst of output instead of
+  scrolling every line. Where a scroll is a blitter copy of the whole
+  window, this is the difference between usable and not.
+- `XClock*update: 60` — a seconds hand redraws the clock once a second,
+  forever. Minutes are enough.
+- No `OpaqueMove` in the twmrc: dragging a window opaquely copies it
+  through VRAM at every step.
+
+A tiled or image backdrop (`xv -root`, `xsetroot -bitmap`) needs the server
+to paint window backgrounds from the pixmap rather than approximating it
+with a single pixel. That is what the tile work fixed; against an older
+server the backdrop goes flat the first time a window crosses it.
+
+### Comparing two builds in a real session
+
+`startxrtg` takes the server binary, mode and options from the environment,
+so an A/B test is the same session with one thing changed rather than a
+benchmark:
+
+```sh
+XSERVER=/usr/bin/X11/Xrtg.phase3b MODE=1280x720 startxrtg
+XOPTS=-compat startxrtg
+```
+
+### XDM graphical login
+
+Optional AMIX XDM integration provides a dark graphical login and selectable
+sessions: **F1** uses the default desktop, **F2** starts amiwm, and **F3** starts
+Open Look. **F4** opens a failsafe terminal; **F5** switches temporarily to the
+native text console after confirmation. **Enter** uses the configured session
+preference. The fresh-install default is twm; existing tvtwm customizations
+can be retained. Optional desktop components must be installed separately.
+
+Installation and boot activation are separate operations.  `install-xdm.sh`
+backs up the existing configuration under `/root` and stages the files without
+changing the boot mode. Local overrides and wallpaper stay outside version
+control; no backdrop image is distributed. See [installation](docs/XDM.md),
+[session selection](docs/XDM-SESSION-CHOOSER.md) and
+[recovery](docs/XDM-RUNBOOK.md) for details. Review local customizations before
+upgrading: the full installer replaces the shared configuration templates.
+
+The patched AMIX XDM can be built in an isolated directory with
+`build-xdm-amix.sh` and installed separately with `install-xdm-binary.sh`.
+Both preserve the distinction between installation and boot activation.
+See [recorded validation](docs/XDM-VALIDATION.md) for tested behavior and the
+remaining interactive checks.
+
+### Server diagnostics
+
+Each binary logs to its own `/tmp/xrtg-<name>.log`, so the second run does
+not overwrite the evidence from the first. The board line is printed at
+startup and the counters are printed when the session ends:
+
+```
+va2000: firmware 49280, framebuffer 32704 KB, bus Zorro III
+va2000: options 0x00af, blitmin 0, mapping 1984 KB
+va2000: PutImage 9349 native, 1 via mi
+va2000: glyph runs 9328 native, 0 via mi
+va2000: blitter 0 timeouts, 3 slow waits, worst 118432 polls
+```
+
+A fast path that never fires and a fast path that does not help look the
+same from outside; the counters tell them apart. The blitter line is the
+one to watch if the desktop stops for a moment: a poll is roughly 200 ns,
+so 118432 polls is about 24 ms of the server spinning.
+
+### Measuring
+
+`x11perf-baseline.sh` records a baseline against a running server. Commit
+the result in `perf/` alongside the change it measures; see `perf/README.md`.
+
+```sh
+sh x11perf-baseline.sh /tmp/p.txt "phase0 z3 060"
+```
+
+### Checking a build before it reaches the machine
+
+`tools/crosscheck.sh` runs on the build host, not on AMIX. It compiles the
+RTG DDX with a m68k cross compiler against a mounted vanilla AMIX filesystem
+and checks things a compile on the machine would not tell you — and one it
+would, but only after a long build:
+
+```sh
+sh tools/crosscheck.sh -s /path/to/amix/rootfs
+```
+
+1. **Instructions the 68060 lacks.** A modern GCC emits the 64-bit-result
+   forms of `MULS.L` and `DIVS.L` for `%` and for division by a literal
+   constant. The 68060 does not implement them, so the kernel traps and
+   emulates: the server still works, just slower, and nothing says so. A
+   sample of eight `mi` and `dix` files contains 42 of them when built for a
+   68030. `-m68020-60` produces none. Note that `-m68040` does *not* avoid
+   them, although it is often offered as the compatible choice.
+2. **Assembly the AMIX assembler will accept.** The cross toolchain and the
+   machine agree on the compiler but not on the assembler, and GNU as is the
+   permissive one — it accepts `move.l %sp,%fp` and quietly assembles it as
+   `movea.l`, where the AMIX assembler refuses. The check generates assembly
+   across a spread of the server and greps for mnemonics this target can
+   never emit.
+3. **Instructions neither processor shares.** Advisory only: `objdump -d` on
+   a `.o` disassembles switch tables as code, so hits need a human look. The
+   output says how to tell.
+
+The sysroot is a mounted vanilla AMIX filesystem containing `usr/include`,
+`usr/amiga/include` and `usr/x11r5`. Pass it with `-s` or set `AMIX_SYSROOT`;
+no path to it is recorded in this repository. Exit status is 0 on pass, 1 on
+a failed check, 2 on a usage error.
+
+### Three compilers, and which one you are actually using
+
+| | Compiler | Flags |
+|---|---|---|
+| Stock AMIX install | GNU C **1.40.5** (1991) | `amix.cf` with `AmixGccMajor 1` |
+| Commonly installed | GNU C **2.7.2.3** under `/usr/local` | `amix.cf` with `AmixGccMajor 2` (default) |
+| Cross build | a modern GCC | the `modern` profile in `tools/crosscheck.sh` |
+
+Check which one you have:
+
+```sh
+gcc -v 2>&1 | head -1
+```
+
+This choice is not cosmetic. `-fcombine-regs`, which `amix.cf` passed to every
+compilation for years, was **removed in GCC 2 and is fatal there** —
+`cc1: Invalid option '-fcombine-regs'`, exit 1, no object. A tree configured
+for 1.40 therefore cannot be built by 2.7.2.3 at all. If 2.7.2.3 is installed
+and `AmixGccMajor` is left at 1, the build silently keeps using the 1991
+compiler — whichever `gcc` your `PATH` finds first.
+
+What each one can do, checked against the compilers themselves rather than
+assumed:
+
+- **1.40.5** has no `-O2` (`toplev.c` compares the switch with
+  `strcmp(str, "O")`, and the driver spec passes `%{O}`), and
+  `TARGET_SWITCHES` offers only `68000`, `68020`, `68881`, `bitfield`, `rtd`,
+  `short`, `fpa` — with `TARGET_DEFAULT` already 68020 + 68881. It does have
+  some of the individual passes GCC 2.x later folded into `-O2`, so `amix.cf`
+  names those.
+- **2.7.2.3** has `-O2`. It has no `-m68060` and no `-m68020-60`. It has
+  `-m68020-40` and `-m68040`, but **do not use them here**: with either, this
+  compiler replaces `link.w %fp,&0` with `pea (%fp)` + `move.l %sp,%fp`, and
+  spells that one instruction MIT-style in a target whose syntax is `mov.l`.
+  The AMIX assembler rejects it (`invalid instruction name`) and the build
+  dies. `-m68030` does not take that path, and `-O2` was always the win.
+- **A modern GCC** has `-m68020-60`, needs `-malign-int` for the AMIX ABI, and
+  needs a build flow that links on the machine.
+
+### The 68060 traps neither AMIX compiler can avoid
+
+GCC generates the 64-bit-result forms of `MULS.L` and `DIVS.L` for `%` and for
+division by a literal constant. The 68060 does not implement them; the kernel
+traps and emulates, so the server works — just slower, with nothing saying so.
+
+`crosscheck.sh` finds 31 of them in the DDX plus a sample of eleven `mi` and
+`dix` files built with 2.7.2.3, and they are in real drawing code, not
+initialisation: `miPolyBuildEdge` (wide lines), `miGetArcEdge` (filled arcs),
+`miZeroArcSetup`, `miGetPlane`, `ProcPutImage`.
+
+gcc 1.40.5 does *not* generate the reciprocal-multiply sequence, so a server
+built by the stock compiler contains none — scanning the `X`, `twm` and
+`xterm` binaries from a vanilla install finds zero. Nothing in 2.7.2.3 avoids
+them. `-m68020-60` in a modern GCC does, which is the argument for the cross
+toolchain.
 
 ---
 

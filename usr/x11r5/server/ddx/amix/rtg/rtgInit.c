@@ -89,6 +89,138 @@ pointer       pReadmask;
     (void)nscreen; (void)pbdata; (void)err; (void)pReadmask;
 }
 
+/* ------------------------------------------------------------------ */
+/* Stall watch                                                          */
+
+/*
+** rtgWakeupWrapper / rtgBlockHandler — time what the server spends awake.
+**
+** A tester reports the desktop stopping for a moment and then carrying on,
+** and the benchmark's own numbers agree: consecutive runs of an unchanged
+** binary differ by about a factor of two, and the slow ones are 1.6 to 2.7
+** seconds longer -- one event of about the length being described, landing
+** inside the measurement or missing it.  Whether those are the same thing
+** is the question this answers.
+**
+** The first version of this measured the gap between one block handler
+** call and the next, which was wrong and said so loudly: it reported ten
+** seconds of "stall" on an idle server, because the gap between two blocks
+** is mostly time spent waiting in select() for a client to say something.
+**
+** The wakeup handler runs when select returns and the block handler runs
+** when the server is about to wait again, so the interval between them is
+** time spent processing -- which is the thing a freeze would be made of.
+** Long processing can be legitimate (one enormous PutImage), so the number
+** is reported rather than judged.
+*/
+long rtg_stalls = 0;            /* awake stretches over RTG_STALL_MS   */
+long rtg_stall_worst = 0;       /* the longest, in ms                  */
+
+#define RTG_STALL_MS      200
+#define RTG_STALL_LOG     16
+
+static struct timeval rtgWokeAt = { 0, 0 };
+static void (*rtgRealWakeup)() = (void (*)()) 0;
+
+/*
+** What the driver had done when the last waking began.
+**
+** A long stretch awake is only half a diagnosis: it says the server did not
+** get back to select(), not what it was doing.  Snapshotting the work
+** counters at each waking and reporting the difference turns "5450 ms awake"
+** into a statement about whether this driver was involved at all.  A stretch
+** that shows near-zero drawing was spent somewhere else -- a font read off
+** the disk, a server reset, the kernel -- and that is worth establishing
+** before optimising any part of the drawing.
+*/
+static long rtgSnapBlits;
+static long rtgSnapPolls;
+static long rtgSnapFillHw;
+static long rtgSnapFillCpu;
+static long rtgSnapCopyHw;
+static long rtgSnapCopyCpu;
+static long rtgSnapImagePx;
+static long rtgSnapGlyphPx;
+
+static void
+rtgWakeupWrapper(nscreen, pbdata, err, pReadmask)
+int           nscreen;
+pointer       pbdata;
+unsigned long err;
+pointer       pReadmask;
+{
+    if (VA2000_OPT(VA2000_OPT_STALLWATCH))
+    {
+        gettimeofday(&rtgWokeAt, (struct timezone *) 0);
+        rtgSnapBlits   = va2000_blits;
+        rtgSnapPolls   = va2000_blit_polls;
+        rtgSnapFillHw  = va2000_fill_hw_px;
+        rtgSnapFillCpu = va2000_fill_cpu_px;
+        rtgSnapCopyHw  = va2000_copy_hw_px;
+        rtgSnapCopyCpu = va2000_copy_cpu_px;
+        rtgSnapImagePx = va2000_image_px;
+        rtgSnapGlyphPx = va2000_glyph_px;
+    }
+
+    if (rtgRealWakeup)
+        (*rtgRealWakeup)(nscreen, pbdata, err, pReadmask);
+}
+
+static void
+rtgBlockHandler(nscreen, pbdata, pptv, pReadmask)
+int              nscreen;
+pointer          pbdata;
+struct timeval **pptv;
+pointer          pReadmask;
+{
+    struct timeval now;
+    long           ms;
+    int            worse;
+
+    if (VA2000_OPT(VA2000_OPT_STALLWATCH) && rtgWokeAt.tv_sec != 0)
+    {
+        gettimeofday(&now, (struct timezone *) 0);
+
+        ms = (now.tv_sec - rtgWokeAt.tv_sec) * 1000L
+           + (now.tv_usec - rtgWokeAt.tv_usec) / 1000L;
+
+        if (ms >= RTG_STALL_MS)
+        {
+            rtg_stalls++;
+
+            /*
+            ** Log the first few, and after that only a new record.
+            **
+            ** A flat cap loses the interesting one.  Startup alone can spend
+            ** several stretches over the threshold -- mode set, VRAM clear,
+            ** fonts -- and if those use up the budget, the stall that happens
+            ** later while somebody is actually using the machine is counted
+            ** and never described.  That later one is the whole point.
+            */
+            worse = (ms > rtg_stall_worst);
+            if (worse)
+                rtg_stall_worst = ms;
+
+            if (rtg_stalls <= RTG_STALL_LOG || worse)
+                ErrorF("va2000: %d ms awake: %d blits (%d polls), fill %d hw + %d cpu, copy %d hw + %d cpu, image %d, glyph %d px\n",
+                       (int) ms,
+                       (int)(va2000_blits      - rtgSnapBlits),
+                       (int)(va2000_blit_polls - rtgSnapPolls),
+                       (int)(va2000_fill_hw_px  - rtgSnapFillHw),
+                       (int)(va2000_fill_cpu_px - rtgSnapFillCpu),
+                       (int)(va2000_copy_hw_px  - rtgSnapCopyHw),
+                       (int)(va2000_copy_cpu_px - rtgSnapCopyCpu),
+                       (int)(va2000_image_px   - rtgSnapImagePx),
+                       (int)(va2000_glyph_px   - rtgSnapGlyphPx));
+        }
+
+        /* Only count each waking once. */
+        rtgWokeAt.tv_sec = 0;
+    }
+
+    amixBlockHandler(nscreen, pbdata, pptv, pReadmask);
+}
+
 static Bool
 rtgSaveScreen(pScreen, on)
 ScreenPtr pScreen;
@@ -122,6 +254,10 @@ ScreenPtr pScreen;
         amixFbs[i].fd     = -1;
         amixFbs[i].mapped = FALSE;
     }
+
+    if (rtg_stalls)
+        ErrorF("va2000: %d stretches over %d ms awake, longest %d ms\n",
+               (int) rtg_stalls, RTG_STALL_MS, (int) rtg_stall_worst);
 
     va2000CloseHW(pRTG);
     xfree((pointer) pRTG);
@@ -221,9 +357,10 @@ char    **argv;
     pScreen->SaveScreen  = rtgSaveScreen;
 
     /* Autorepeat handlers; use real amixWakeupHandler when input fd is open */
-    pScreen->BlockHandler  = amixBlockHandler;
-    pScreen->WakeupHandler = amixFbs[index].mapped
+    pScreen->BlockHandler  = rtgBlockHandler;
+    rtgRealWakeup          = amixFbs[index].mapped
                              ? amixWakeupHandler : rtgWakeupHandler;
+    pScreen->WakeupHandler = rtgWakeupWrapper;
     pScreen->blockData     = (pointer) NULL;
     pScreen->wakeupData    = (pointer) NULL;
 
@@ -251,6 +388,77 @@ char    **argv;
 }
 
 /* ------------------------------------------------------------------ */
+
+/*
+** rtgOpenInput — open the AMIX screen device and take the input.
+**
+** SIOCACTIVATE (SelectScreen) makes our screen context the active one for
+** event delivery without calling DisplayScreen.  DisplayScreen would want
+** NewBitmap -- chip RAM for a native bitmap -- and would take over the ECS
+** display, which makes the screen manager send SIGHUP to the X server when
+** the native console loses its screen.  SIOCACTIVATE selects us as the event
+** target without switching the displayed screen group, so the Amiga display
+** is unaffected and no spurious SIGHUP is generated.
+**
+** This has to be redone from scratch on every server generation, and opening
+** is the part that is easy to miss.  InitOutput probes once and remembers it
+** in amixDevsProbed, so after a reset only rtgCreate runs.  Worse, the screen
+** device does not merely go unreferenced: amixCloseScreen calls CloseScreen()
+** on the fd and memsets the whole amixFbs entry, so by the next generation
+** the descriptor is closed and the record of it is gone.  Re-activating the
+** old fd would be re-activating a closed one.
+**
+** Easy to reach without meaning to.  The X server resets when its last client
+** disconnects, so a session that runs xrdb or xsetroot before its first
+** long-lived client resets twice before it has finished starting -- and comes
+** up with the display working and no keyboard or mouse.
+*/
+static int
+rtgOpenInput(index, who)
+int   index;
+char *who;
+{
+    extern char *display;
+    char screenname[1024];
+    int  fd;
+
+    if (amixFbs[index].scrtype.dispz == 0)
+        amixFbs[index].scrtype = DefaultScrType;
+
+    if (sprintf(screenname, "Xrtg :%s.%d", display, index) < 0)
+        fd = OpenScreen("Xrtg", &amixFbs[index].scrtype, 0);
+    else
+        fd = OpenScreen(screenname, &amixFbs[index].scrtype, 0);
+
+    if (fd < 0)
+    {
+        ErrorF("%s: OpenScreen failed (%s)\n", who, ScreenError());
+        amixFbs[index].fd     = -1;
+        amixFbs[index].mapped = FALSE;
+        return -1;
+    }
+
+    if (fcntl(fd, F_SETFL, O_NDELAY) == -1)
+        ErrorF("%s: F_SETFL O_NDELAY failed (%s)\n", who, strerror(errno));
+
+    if (ioctl(fd, SIOCACTIVATE, 0))
+        ErrorF("%s: SIOCACTIVATE failed (%s)\n", who, strerror(errno));
+
+    if (ioctl(fd, SIOCSETINPUTMODE, SIM_RAWKEY))
+        ErrorF("%s: SIOCSETINPUTMODE SIM_RAWKEY failed (%s)\n",
+               who, strerror(errno));
+
+    amixFbs[index].fd     = fd;
+    amixFbs[index].mapped = TRUE;
+    amixFbs[index].group  = ioctl(fd, SIOCGETGROUP, 0);
+
+    sysKbPriv.fd           = fd;
+    sysMousePriv.fd        = fd;
+    amixCurrentScreenIndex = index;
+
+    ErrorF("%s: input fd=%d group=%d\n", who, fd, amixFbs[index].group);
+    return fd;
+}
 
 /*
 ** rtgProbe — probeProc entry in amixFbData[].
@@ -282,9 +490,7 @@ int         fbNum;
 int         argc;
 char      **argv;
 {
-    extern char *display;
-    char screenname[1024];
-    int  fd;
+    int fd;
 
     ErrorF("rtgProbe: index=%d\n", index);
 
@@ -294,59 +500,10 @@ char      **argv;
         return FALSE;
     }
 
-    /* Open the AMIX screen device for input events */
-    if (amixFbs[index].scrtype.dispz == 0)
-        amixFbs[index].scrtype = DefaultScrType;
-
-    if (sprintf(screenname, "Xrtg :%s.%d", display, index) < 0)
-        fd = OpenScreen("Xrtg", &amixFbs[index].scrtype, 0);
-    else
-        fd = OpenScreen(screenname, &amixFbs[index].scrtype, 0);
+    fd = rtgOpenInput(index, "rtgProbe");
 
     if (fd < 0)
-    {
-        ErrorF("rtgProbe: OpenScreen failed (%s); starting display-only\n",
-               ScreenError());
-        fd = -1;
-    }
-
-    if (fd >= 0)
-    {
-        if (fcntl(fd, F_SETFL, O_NDELAY) == -1)
-            ErrorF("rtgProbe: F_SETFL O_NDELAY failed (%s)\n",
-                   strerror(errno));
-
-        /* SIOCACTIVATE (SelectScreen) makes our screen context the active
-        ** one for keyboard/mouse event delivery without calling DisplayScreen.
-        ** DisplayScreen would require NewBitmap (chip RAM for a native bitmap)
-        ** and would take over the ECS display, causing the screen manager to
-        ** send SIGHUP to the X server when the native console loses its screen.
-        ** SIOCACTIVATE selects our screen as the event target without switching
-        ** the displayed screen group, so the native Amiga display is unaffected
-        ** and no spurious SIGHUP is generated. */
-        if (ioctl(fd, SIOCACTIVATE, 0))
-            ErrorF("rtgProbe: SIOCACTIVATE failed (%s)\n", strerror(errno));
-
-        if (ioctl(fd, SIOCSETINPUTMODE, SIM_RAWKEY))
-            ErrorF("rtgProbe: SIOCSETINPUTMODE SIM_RAWKEY failed (%s)\n",
-                   strerror(errno));
-
-        amixFbs[index].fd     = fd;
-        amixFbs[index].mapped = TRUE;
-        amixFbs[index].group  = ioctl(fd, SIOCGETGROUP, 0);
-
-        sysKbPriv.fd           = fd;
-        sysMousePriv.fd        = fd;
-        amixCurrentScreenIndex = index;
-
-        ErrorF("rtgProbe: input fd=%d group=%d\n",
-               fd, amixFbs[index].group);
-    }
-    else
-    {
-        amixFbs[index].fd     = -1;
-        amixFbs[index].mapped = FALSE;
-    }
+        ErrorF("rtgProbe: starting display-only\n");
 
     amixFbs[index].bp.width  = va2000_selected_mode->w;
     amixFbs[index].bp.height = va2000_selected_mode->h;
@@ -370,6 +527,16 @@ int         argc;
 char      **argv;
 {
     ErrorF("rtgCreate: called, serverGeneration=%d\n", serverGeneration);
+
+    /*
+    ** Take the input back.  Generation 1 got it from rtgProbe; every later
+    ** one has to open the screen device again, because the probe does not
+    ** run a second time and amixCloseScreen closed the last one.
+    */
+    if (serverGeneration > 1)
+        (void) rtgOpenInput(amixCurrentScreenIndex >= 0
+                            ? amixCurrentScreenIndex : 0,
+                            "rtgCreate");
 
     if (rtgGeneration != serverGeneration)
     {

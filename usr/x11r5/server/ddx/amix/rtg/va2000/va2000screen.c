@@ -31,6 +31,7 @@
 #include "servermd.h"
 #include "mi.h"
 #include "mfb.h"
+#include "mibstore.h"
 #include "../../amix.h"
 #include "../rtg.h"
 #include "va2000.h"
@@ -64,6 +65,33 @@ extern RegionPtr va2000CopyArea();
 extern void      va2000CopyWindow();
 extern void      va2000PaintWindow();
 extern void      va2000SolidRect();
+extern void      va2000PutImage();
+extern void      va2000SaveAreas();
+extern void      va2000FillTileSpans();
+extern void      va2000FillStipSpans();
+extern void      va2000RestoreAreas();
+
+/*
+** mibstore.h declares miInitBackingStore, but mibstore.c defines
+** miInitializeBackingStore.  The header is wrong; take the definition.
+*/
+extern void miInitializeBackingStore();
+
+/*
+** What mibstore needs from the driver.  SetClipmaskRgn and the two pixmap
+** getters are optional and cfb passes zeroes for them too.
+*/
+static miBSFuncRec va2000BSFuncs = {
+    va2000SaveAreas,
+    va2000RestoreAreas,
+    (void (*)()) 0,
+    (PixmapPtr (*)()) 0,
+    (PixmapPtr (*)()) 0,
+};
+
+/* va2000text.c */
+extern void      va2000PolyGlyphBlt();
+extern void      va2000ImageGlyphBlt();
 
 /* va2000win.c */
 extern Bool va2000CreateWindow();
@@ -114,7 +142,7 @@ static GCOps va2000gcOps =
 {
     va2000FillSpans,    /* FillSpans   */
     va2000SetSpans,     /* SetSpans    */
-    miPutImage,         /* PutImage    — mi handles all wire formats    */
+    va2000PutImage,     /* PutImage    — native ZPixmap/16/GXcopy, else mi */
     va2000CopyArea,     /* CopyArea    */
     miCopyPlane,        /* CopyPlane   */
     miPolyPoint,        /* PolyPoint   */
@@ -129,8 +157,8 @@ static GCOps va2000gcOps =
     miPolyText16,       /* PolyText16  */
     miImageText8,       /* ImageText8  */
     miImageText16,      /* ImageText16 */
-    miImageGlyphBlt,    /* ImageGlyphBlt */
-    miPolyGlyphBlt,     /* PolyGlyphBlt */
+    va2000ImageGlyphBlt, /* ImageGlyphBlt — native, else mi */
+    va2000PolyGlyphBlt,  /* PolyGlyphBlt  — native, else mi */
     miPushPixels,       /* PushPixels  */
     miMiter,            /* LineHelper  */
 };
@@ -165,21 +193,21 @@ GCPtr pGC;
 {
     RTGGCPRIV *pPriv;
 
-    ErrorF("va2000CreateGC: depth=%d\n", pGC->depth);
-
     /* Delegate 1-bit GCs to mfb — same pattern as cfb/cfbgc.c line 241.
        mfbAllocatePrivates() in rtgScreenInit ensures the mfb GC private
        slot exists before any GC is created. */
     if (pGC->depth == 1)
         return mfbCreateGC(pGC);
 
+    /* This one stays: it fires once, on a real error, and the message is
+    ** the only clue the log would carry.  The two informational ErrorF calls
+    ** that used to bracket it ran on every single GC creation -- formatting
+    ** and writing two lines to /tmp/xrtg.log each time a client made a GC. */
     if (pGC->depth != VA2000_DEPTH)
     {
         ErrorF("va2000CreateGC: unsupported depth %d\n", pGC->depth);
         return FALSE;
     }
-
-    ErrorF("va2000CreateGC: pPriv=%p\n", pGC->devPrivates[rtgGCPrivateIndex].ptr);
 
     pGC->funcs = (GCFuncs *) xalloc(sizeof(GCFuncs));
     if (!pGC->funcs)
@@ -285,7 +313,7 @@ DrawablePtr   pDraw;
 
     pGC->ops->FillSpans     = va2000FillSpans;  /* solid; tile/stip: TODO */
     pGC->ops->SetSpans      = va2000SetSpans;
-    pGC->ops->PutImage      = miPutImage;
+    pGC->ops->PutImage      = va2000PutImage;
     pGC->ops->CopyArea      = va2000CopyArea;
     pGC->ops->CopyPlane     = miCopyPlane;
     pGC->ops->PolyPoint     = miPolyPoint;
@@ -300,8 +328,8 @@ DrawablePtr   pDraw;
     pGC->ops->PolyText16    = miPolyText16;
     pGC->ops->ImageText8    = miImageText8;
     pGC->ops->ImageText16   = miImageText16;
-    pGC->ops->ImageGlyphBlt = miImageGlyphBlt;
-    pGC->ops->PolyGlyphBlt  = miPolyGlyphBlt;
+    pGC->ops->ImageGlyphBlt = va2000ImageGlyphBlt;
+    pGC->ops->PolyGlyphBlt  = va2000PolyGlyphBlt;
     pGC->ops->PushPixels    = miPushPixels;
     pGC->ops->LineHelper    = miMiter;
 }
@@ -407,9 +435,13 @@ DrawablePtr   pDraw;
         pGC->ops->PolyText8    = miPolyText8;
         break;
 
+    /*
+    ** Patterned fills go through the span writers in va2000tile.c.
+    ** miPolyFillRect and miPushPixels both end in FillSpans, so setting
+    ** that one slot is what makes rectangles and stencils patterned too.
+    */
     case FillTiled:
-        /* TODO: implement va2000FillTileSpans; using solid as placeholder */
-        pGC->ops->FillSpans    = va2000FillSpans;
+        pGC->ops->FillSpans    = va2000FillTileSpans;
         pGC->ops->FillPolygon  = miFillPolygon;
         pGC->ops->PolyFillRect = miPolyFillRect;
         pGC->ops->PushPixels   = miPushPixels;
@@ -418,8 +450,7 @@ DrawablePtr   pDraw;
 
     case FillStippled:
     case FillOpaqueStippled:
-        /* TODO: implement va2000FillStipSpans; using solid as placeholder */
-        pGC->ops->FillSpans    = va2000FillSpans;
+        pGC->ops->FillSpans    = va2000FillStipSpans;
         pGC->ops->FillPolygon  = miFillPolygon;
         pGC->ops->PolyFillRect = miPolyFillRect;
         pGC->ops->PushPixels   = miPushPixels;
@@ -605,8 +636,28 @@ DepthRec    *pDepth;
     pScreen->numVisuals    = 1;
     pScreen->visuals       = pVisual;
 
-    pScreen->backingStoreSupport = NotUseful;
-    pScreen->saveUnderSupport    = NotUseful;
+    /*
+    ** Backing store is opt-in, with -bstore.
+    **
+    ** It does not make any single operation faster; it removes operations.
+    ** An obscured window that has its contents saved does not have to ask
+    ** its client to redraw when it comes back, and a menu that saves what
+    ** is under it puts the desktop back itself.  On a machine where the
+    ** redraw is the slow part, that is worth more than most of what this
+    ** branch has done -- but it is paid for in memory, and a stock A3000UX
+    ** with 4-8 MB cannot spare 960 KB for one 800x600 window's worth.
+    ** Hence the flag rather than a default.
+    */
+    if (VA2000_OPT(VA2000_OPT_BSTORE))
+    {
+        pScreen->backingStoreSupport = WhenMapped;
+        pScreen->saveUnderSupport    = WhenMapped;
+    }
+    else
+    {
+        pScreen->backingStoreSupport = NotUseful;
+        pScreen->saveUnderSupport    = NotUseful;
+    }
     pScreen->DrawGuarantee       = va2000DrawGuarantee;
     pScreen->PostValidateTree    = (void (*)()) 0;
 
@@ -689,6 +740,14 @@ DepthRec    *pDepth;
 
     /* Miscellaneous */
     pScreen->SendGraphicsExpose = miSendGraphicsExpose;
+
+    /*
+    ** mibstore wraps the screen and GC functions installed above, so it has
+    ** to go on last -- and before the cursor layer, which rtgInit.c wraps on
+    ** top of everything after this returns.  Same order as cfb.
+    */
+    if (VA2000_OPT(VA2000_OPT_BSTORE))
+        miInitializeBackingStore(pScreen, &va2000BSFuncs);
 
     /* Block/Wakeup and cursor are installed by rtgInit.c after this returns */
 

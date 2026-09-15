@@ -1,0 +1,71 @@
+!
+! Xdefaults for an Xrtg session.
+!
+! Install as /root/.Xdefaults; startxrtg loads it with xrdb.
+!
+! Two of these are about speed rather than looks, and they matter more on
+! this machine than anything in the .twmrc:
+!
+!   XTerm*jumpScroll     redraw once after a burst of output instead of
+!                        scrolling every line.  On a display where a scroll
+!                        is a blitter copy of the whole window, the
+!                        difference between this on and off is the
+!                        difference between usable and not.
+!   XClock*update: 60    a seconds hand redraws the clock once a second,
+!                        forever, on a machine where that is not free.
+!                        Minutes are enough.
+!
+! Colours are given in full, because a 16-bit TrueColor screen has no
+! colormap to run out of -- the thing that made 1990s X sessions grey.
+!
+! The terminal font is 8x13.  The sizes to move between, all present in
+! /usr/X/lib/fonts/misc with matching bold aliases, are 6x13, 7x13, 8x13,
+! 9x15 and 10x20.  At 1280x720 an 80x24 xterm in 8x13 is 640x312 pixels.
+
+*customization:          -color
+
+! ---- xterm ---------------------------------------------------------------
+
+XTerm*font:              8x13
+XTerm*boldFont:          8x13bold
+XTerm*background:        #10161c
+XTerm*foreground:        #c9d1d9
+XTerm*cursorColor:       #e8913a
+XTerm*pointerColor:      #e8913a
+XTerm*internalBorder:    3
+XTerm*scrollBar:         true
+XTerm*saveLines:         500
+XTerm*jumpScroll:        true
+XTerm*multiScroll:       true
+XTerm*scrollTtyOutput:   false
+XTerm*scrollKey:         true
+! The visual bell is off on purpose.  xterm implements it by XORing the
+! whole window, flushing, and XORing it back -- see VisualBell() in
+! xterm/misc.c -- and a read-modify-write over every pixel is the most
+! expensive thing that can be asked of this card.  A read across Zorro
+! cannot be posted the way a write can, so it is not the cost of a fill;
+! at 80x24 it is 200 000 pixels touched twice, twice.  Hold down Tab and
+! you watch it happen.  The driver now does that XOR two pixels per bus
+! cycle instead of one, which halves it, but half of far too slow is
+! still too slow for something that fires on every stray keystroke.
+XTerm*visualBell:        false
+XTerm*titeInhibit:       true
+! XDM supplies no inherited login tty settings. /etc/profile sets echoe
+! and erase correctly; use a login shell for newly opened terminals.
+XTerm*loginShell:        true
+
+! ---- xclock --------------------------------------------------------------
+
+XClock*update:           60
+XClock*background:       #10161c
+XClock*foreground:       #c9d1d9
+XClock*hands:            #e8913a
+XClock*highlight:        #e8913a
+XClock*borderWidth:      0
+
+! ---- everything else -----------------------------------------------------
+
+*Background:             #1b2129
+*Foreground:             #c9d1d9
+*borderColor:            #3a4451
+*Font:                   -adobe-helvetica-medium-r-normal--12-*-*-*-*-*-*-*

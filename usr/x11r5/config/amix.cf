@@ -34,7 +34,90 @@ XCOMM operating system:  OSName OSVendor
 #define StripInstalledPrograms		YES
 
 #define HasGcc				YES
+
+/*
+ * Which compiler will build this tree.
+ *
+ *   1 = GNU C 1.40.5, the compiler a stock AMIX install ships
+ *   2 = GNU C 2.7.2.3, commonly installed under /usr/local
+ *
+ * Check with:  gcc -v 2>&1 | head -1
+ *
+ * This is not cosmetic.  -fcombine-regs, which this file passed to every
+ * compilation for years, was REMOVED in GCC 2 and is fatal there:
+ *
+ *   cc1: Invalid option `-fcombine-regs'     (exit 1, no object)
+ *
+ * So a tree configured for 1 cannot be built by 2 at all.  If gcc 2.7.2.3
+ * is installed and this is left at 1, the build silently keeps using the
+ * 1991 compiler -- whichever `gcc` PATH finds first -- and the newer one
+ * never gets a chance.
+ */
+
+#ifndef AmixGccMajor
+#define AmixGccMajor 2
+#endif
+
+/*
+ * Optimisation flags for the X server.
+ *
+ * Server.tmpl sets CDEBUGFLAGS from ServerCDebugFlags, so this one line
+ * reaches dix, os, mi, mfb, cfb and the DDX -- everything the server
+ * spends its time in.
+ *
+ * GNU C 2.7.2.3 has -O2, which is the win here.
+ *
+ * The architecture flag is -m68030 and NOT -m68020-40, even though the
+ * latter is the one that means "run on 020 through 040".  With -m68040 or
+ * -m68020-40 this compiler replaces the frame setup
+ *
+ *     link.w %fp,&0                with      pea (%fp)
+ *                                            move.l %sp,%fp
+ *
+ * because LINK is slow on an 040 -- and it spells that one instruction
+ * `move.l`, in a target whose assembler syntax is `mov.l`.  It is the only
+ * `move.` in the file, against 855 `mov.`, so it is a hardcoded string in
+ * the backend that missed the AT&T syntax variant.  The AMIX assembler
+ * rejects it:
+ *
+ *     Assembler: multibuf.c
+ *         aline 2115  : invalid instruction name
+ *
+ * -m68020 and -m68030 do not take that path and build clean.  GNU as
+ * accepts `move.l` and assembles it as `movea.l`, so a cross build with
+ * binutils does not see this at all -- which is why tools/crosscheck.sh
+ * now greps the generated assembly for it.
+ *
+ * GNU C 1.40.5 has neither.  -O2 does not exist (toplev.c compares the
+ * switch with strcmp(str, "O"), and the driver spec passes %{O}), and
+ * TARGET_SWITCHES has only 68000/68020/68881/bitfield/rtd/short/fpa --
+ * with TARGET_DEFAULT already 68020 + 68881.  What it does have is some
+ * of the individual passes GCC 2.x later folded into -O2, so name those.
+ *
+ * Worth measuring one at a time against a baseline, not enabled here:
+ *   -fcaller-saves -fforce-mem -fforce-addr
+ *
+ * ONE THING NEITHER COMPILER CAN FIX.  Both generate the 64-bit-result
+ * MULS.L/DIVS.L forms for `%` and for division by a literal constant, and
+ * the 68060 does not implement them -- it traps into kernel emulation.
+ * They occur in real drawing paths: miPolyBuildEdge, miGetArcEdge,
+ * miZeroArcSetup, ProcPutImage.  No flag in GCC 2.7.2.3 avoids them;
+ * -m68020-60 in a modern GCC does, which is the argument for the cross
+ * toolchain.  tools/crosscheck.sh counts them.
+ */
+
+#if AmixGccMajor >= 2
+#define GccOptions -ansi -finline-functions DDXServerDefines
+#ifndef ServerCDebugFlags
+#define ServerCDebugFlags -O2 -m68030 -fomit-frame-pointer
+#endif
+#else
 #define GccOptions -ansi -finline-functions -fcombine-regs DDXServerDefines
+#ifndef ServerCDebugFlags
+#define ServerCDebugFlags -O -fomit-frame-pointer -fstrength-reduce
+#endif
+#endif
+
 #define ServerCcCmd gcc GccOptions
 #define CcCmd gcc GccOptions
 #define	CppCmd /usr/public/lib/gcc-cpp

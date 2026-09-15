@@ -1,0 +1,49 @@
+#!/bin/sh
+# Paint the root window before xdm displays the login widget.
+
+PATH=/usr/X/bin:/usr/bin/X11:/usr/bin:/bin
+export PATH
+
+LIBDIR=/usr/X/lib/xrtg
+LOG=/usr/X/lib/xdm/Xsetup.log
+umask 077
+
+# XDM is normally started by SAF, whose stdout/stderr do not end up in the
+# XDM error log on AMIX. Keep a small, non-secret trace next to its config so a failed
+# login background remains diagnosable without enabling verbose xdm logging.
+exec > "$LOG" 2>&1
+date
+echo "Xsetup_0: DISPLAY=${DISPLAY:-unset}"
+echo "Xsetup_0: XAUTHORITY=${XAUTHORITY:-unset}"
+if [ -n "$XAUTHORITY" ]; then
+    ls -l "$XAUTHORITY" 2>/dev/null || \
+        echo "Xsetup_0: authority file is not readable"
+fi
+
+if [ -f "$LIBDIR/session.conf" ]; then
+    . "$LIBDIR/session.conf"
+fi
+if [ -f "$LIBDIR/session.conf.local" ]; then
+    . "$LIBDIR/session.conf.local"
+fi
+
+if [ -z "$XRTG_ROOT_COLOR" ]; then
+    XRTG_ROOT_COLOR="#1b2129"
+fi
+
+echo "Xsetup_0: applying Xrtg login background" >&2
+
+if [ -n "$XRTG_BACKDROP" ]; then
+    if [ -f "$XRTG_BACKDROP" ] && [ -x /usr/X/bin/xv ]; then
+        /usr/X/bin/xv -root -quit "$XRTG_BACKDROP"
+    else
+        echo "Xsetup_0: backdrop unavailable: $XRTG_BACKDROP" >&2
+        /usr/X/bin/xsetroot -solid "$XRTG_ROOT_COLOR"
+    fi
+else
+    /usr/X/bin/xsetroot -solid "$XRTG_ROOT_COLOR"
+fi
+
+/usr/X/bin/xsetroot -cursor_name left_ptr 2>/dev/null
+echo "Xsetup_0: complete"
+exit 0

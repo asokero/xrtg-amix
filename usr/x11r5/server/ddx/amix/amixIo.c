@@ -409,6 +409,34 @@ ddxProcessArgument (argc, argv, i)
 	}
 	return 2;
     }
+    if (!strcmp(argv[i], "-compat")) {	/* disable every RTG fast path */
+	va2000_options = 0;
+	return 1;
+    }
+    if (!strcmp(argv[i], "-vaopt")) {	/* set the option mask directly */
+	if (++i >= argc) UseMsg ();
+	va2000_options = (unsigned long) strtol(argv[i], (char **)0, 0);
+	return 2;
+    }
+    if (!strcmp(argv[i], "-bstore")) {	/* enable backing store (costs RAM) */
+	va2000_options |= VA2000_OPT_BSTORE;
+	return 1;
+    }
+    if (!strcmp(argv[i], "-bus")) {	/* override bus autodetection */
+	if (++i >= argc) UseMsg ();
+	if (!va2000SetBus(argv[i])) {
+	    ErrorF("Unknown -bus: %s (expected z2 or z3)\n", argv[i]);
+	    UseMsg();
+	}
+	return 2;
+    }
+    if (!strcmp(argv[i], "-blitmin")) {	/* blitter/CPU crossover, pixels */
+	if (++i >= argc) UseMsg ();
+	va2000_blit_min = atoi(argv[i]);
+	if (va2000_blit_min < 0)
+	    va2000_blit_min = 0;
+	return 2;
+    }
     if (!strcmp(argv[i], "-type")) {	/* screen type */
 	if (++i >= argc) UseMsg ();
 	amixFbs[AmixIndex].scrtype.type = atoi(argv[i]);
@@ -515,6 +543,14 @@ ddxUseMsg()
     ErrorF("-height int            screen height in pixels.\n");
     ErrorF("-depth int             screen depth in planes.\n");
     ErrorF("-mode WxH              RTG video mode (e.g. 800x600, 1024x768)\n");
+    ErrorF("-compat                disable every RTG fast path (bug hunting)\n");
+    ErrorF("-vaopt mask            set the RTG option mask (0x01af = all)\n");
+    ErrorF("                       glyph 1, copy 2, putimage 4, longword 8,\n");
+    ErrorF("                       asyncblt 0x10, tile 0x20, bstore 0x40,\n");
+    ErrorF("                       vrampix 0x80, stallwatch 0x100\n");
+    ErrorF("-bstore                enable backing store (needs free memory)\n");
+    ErrorF("-bus z2|z3             override VA2000 bus autodetection\n");
+    ErrorF("-blitmin int           use CPU below this rectangle area\n");
     ErrorF("-group int		   screen group\n");
 #ifdef TIGA
     ErrorF("-res<#>                Use /dev/dmi<#> as display.\n");

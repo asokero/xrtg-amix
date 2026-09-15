@@ -1,13 +1,17 @@
 #include <Server.tmpl>
 
-SRCS = va2000hw.c va2000screen.c va2000draw.c va2000win.c \
+SRCS = va2000hw.c va2000screen.c va2000draw.c va2000text.c va2000tile.c va2000win.c \
        va2000cmap.c va2000pix.c va2000cursor.c
 
-OBJS = va2000hw.o va2000screen.o va2000draw.o va2000win.o \
+OBJS = va2000hw.o va2000screen.o va2000draw.o va2000text.o va2000tile.o va2000win.o \
        va2000cmap.o va2000pix.o va2000cursor.o
 
 STD_DEFINES = ServerDefines -DRTG -DVA2000
-CDEBUGFLAGS = -g -O
+XCOMM No CDEBUGFLAGS override here: Server.tmpl sets it from
+XCOMM ServerCDebugFlags, which config/amix.cf defines for the whole
+XCOMM server.  This used to say -g -O, which kept the symbol table in
+XCOMM the shipped binary and, more to the point, meant these two
+XCOMM directories ignored any flag added server-wide.
    INCLUDES = -I. -I.. -I../.. -I../../../../include -I$(INCLUDESRC) \
               -I../../../mi -I../../../mfb -I$(FONTSRC)/include \
               -I/usr/include

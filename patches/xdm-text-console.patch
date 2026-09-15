@@ -1,0 +1,429 @@
+--- Login.c.orig
++++ Login.c
+@@ -28,6 +28,12 @@
+ # include <X11/Xfuncs.h>
+ 
+ # include <stdio.h>
++# include <unistd.h>
++# include <fcntl.h>
++# include <signal.h>
++# include <sys/stat.h>
++# include <sys/wait.h>
++# include <errno.h>
+ 
+ # include "LoginP.h"
+ 
+@@ -67,6 +73,8 @@
+ 	offset(namePrompt), XtRString, "Login:  "},
+     {XtNpasswdPrompt, XtCNamePrompt, XtRString, sizeof (char *),
+ 	offset(passwdPrompt), XtRString, "Password:  "},
++    {"allowTextConsole", "AllowTextConsole", XtRBoolean, sizeof (Boolean),
++        offset(allowTextConsole), XtRImmediate, False},
+     {"sessionHint", "SessionHint", XtRString, sizeof (char *),
+         offset(sessionHint), XtRString, ""},
+     {"sessionHint2", "SessionHint", XtRString, sizeof (char *),
+@@ -324,6 +332,24 @@
+ draw_it (w)
+     LoginWidget	w;
+ {
++    if (w->login.consoleState) {
++        char *title;
++        char *hint;
++        title = w->login.consoleState == 1 ? "Switch to text console?" :
++            (w->login.consoleState == 2 ? "Stopping graphical login..." :
++             "Console switch did not complete");
++        hint = w->login.consoleState == 1 ? "Enter = confirm    Escape = cancel" :
++            (w->login.consoleState == 2 ? "Please wait; switching to native console" :
++             "Escape = return to login; check console.log");
++        XClearWindow (XtDisplay(w), XtWindow(w));
++        XDrawString (XtDisplay(w), XtWindow(w), w->login.promptGC,
++            (int)(w->core.width - HintWidth(w, title)) / 2,
++            LOGIN_Y(w), title, strlen(title));
++        XDrawString (XtDisplay(w), XtWindow(w), w->login.promptGC,
++            (int)(w->core.width - HintWidth(w, hint)) / 2,
++            PASS_Y(w) + 2 * Y_INC(w), hint, strlen(hint));
++        return;
++    }
+     EraseCursor (w);
+     if (GREETING(w)[0])
+ 	    XDrawString (XtDisplay (w), XtWindow (w), w->login.greetGC,
+@@ -360,6 +386,117 @@
+ 
+ /*ARGSUSED*/
+ static void
++ConsoleTimeout (closure, id)
++    XtPointer closure;
++    XtIntervalId *id;
++{
++    LoginWidget w = (LoginWidget)closure;
++    int result, status;
++    result = waitpid(w->login.consolePid, &status, WNOHANG);
++    if (result == 0 || (result < 0 && errno == EINTR)) {
++        w->login.consoleTimeout = XtAddTimeOut(1000, ConsoleTimeout, closure);
++        return;
++    }
++    w->login.consoleTimeout = 0;
++    w->login.consolePid = 0;
++    w->login.consoleState = 3;
++    draw_it(w);
++}
++
++/* No configurable command or user arguments cross this privilege boundary.
++ * The detached child does not use Xlib or retain the X connection. */
++static int
++StartConsoleHelper ()
++{
++    struct stat st;
++    int pid, fd;
++    long maxfd;
++    char *env[3];
++    if (geteuid() != 0 ||
++        stat("/usr/X/bin/xdm-console", &st) != 0 ||
++        !S_ISREG(st.st_mode) || st.st_uid != 0 || (st.st_mode & 022))
++        return 0;
++    maxfd = sysconf(_SC_OPEN_MAX);
++    if (maxfd < 0) return 0;
++    pid = fork();
++    if (pid < 0) return 0;
++    if (pid != 0) return pid;
++    if (setsid() < 0) _exit(1);
++    signal(SIGHUP, SIG_IGN);
++    signal(SIGTERM, SIG_DFL);
++    signal(SIGINT, SIG_DFL);
++    signal(SIGCHLD, SIG_DFL);
++    for (fd = 0; fd < maxfd; fd++) close(fd);
++    if (chdir("/") != 0) _exit(1);
++    umask(077);
++    if (open("/dev/null", O_RDONLY) != 0) _exit(1);
++    if (open("/usr/X/lib/xdm/console.log",
++             O_WRONLY | O_CREAT | O_APPEND, 0600) != 1) _exit(1);
++    if (dup(1) != 2) _exit(1);
++    env[0] = "PATH=/usr/X/bin:/usr/bin:/usr/sbin:/usr/ucb:/bin";
++    env[1] = "HOME=/root";
++    env[2] = 0;
++    execle("/bin/sh", "sh", "/usr/X/bin/xdm-console", (char *)0, env);
++    _exit(1);
++    return 0;
++}
++
++static void
++ConsoleRequest (ctxw, event, params, num_params)
++    Widget ctxw;
++    XEvent *event;
++    String *params;
++    Cardinal *num_params;
++{
++    LoginWidget w = (LoginWidget)ctxw;
++    if (!w->login.allowTextConsole || w->login.consoleState) return;
++    RemoveFail(w);
++    bzero(w->login.data.name, NAME_LEN);
++    bzero(w->login.data.passwd, NAME_LEN);
++    w->login.cursor = 0;
++    w->login.state = GET_NAME;
++    if (w->login.sessionArg) XtFree(w->login.sessionArg);
++    w->login.sessionArg = 0;
++    w->login.consoleState = 1;
++    draw_it(w);
++}
++
++static void
++ConsoleConfirm (ctxw, event, params, num_params)
++    Widget ctxw;
++    XEvent *event;
++    String *params;
++    Cardinal *num_params;
++{
++    LoginWidget w = (LoginWidget)ctxw;
++    if (!w->login.allowTextConsole || w->login.consoleState != 1) return;
++    w->login.consoleState = 2;
++    draw_it(w);
++    XFlush(XtDisplay(w));
++    w->login.consolePid = StartConsoleHelper();
++    if (!w->login.consolePid) {
++        w->login.consoleState = 3;
++        draw_it(w);
++        return;
++    }
++    w->login.consoleTimeout = XtAddTimeOut(1000, ConsoleTimeout, (XtPointer)w);
++}
++
++static void
++ConsoleCancel (ctxw, event, params, num_params)
++    Widget ctxw;
++    XEvent *event;
++    String *params;
++    Cardinal *num_params;
++{
++    LoginWidget w = (LoginWidget)ctxw;
++    if (w->login.consoleState != 1 && w->login.consoleState != 3) return;
++    w->login.consoleState = 0;
++    XClearWindow(XtDisplay(w), XtWindow(w));
++    draw_it(w);
++}
++
++static void
+ DeleteBackwardChar (ctxw, event, params, num_params)
+     Widget ctxw;
+     XEvent	*event;
+@@ -368,7 +505,9 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     if (ctx->login.cursor > 0) {
+ 	ctx->login.cursor--;
+@@ -385,6 +524,7 @@
+ 	    break;
+ 	}
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);	
+ }
+ 
+@@ -398,7 +538,9 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     switch (ctx->login.state) {
+     case GET_NAME:
+@@ -416,6 +558,7 @@
+ 	}
+ 	break;
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);	
+ }
+ 
+@@ -429,10 +572,13 @@
+ {
+     LoginWidget	ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     if (ctx->login.cursor > 0)
+     	ctx->login.cursor--;
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -446,7 +592,9 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     switch (ctx->login.state) {
+     case GET_NAME:
+@@ -458,6 +606,7 @@
+ 	    ++ctx->login.cursor;
+ 	break;
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -471,9 +620,12 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     ctx->login.cursor = 0;
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -487,7 +639,9 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     switch (ctx->login.state) {
+     case GET_NAME:
+@@ -497,6 +651,7 @@
+     	ctx->login.cursor = strlen (ctx->login.data.passwd);
+ 	break;
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -510,7 +665,9 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     switch (ctx->login.state) {
+     case GET_NAME:
+@@ -521,6 +678,7 @@
+ 	ctx->login.data.passwd[ctx->login.cursor] = '\0';
+ 	break;
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -549,7 +707,9 @@
+     extern int GetPasswordP();
+ #endif /* NO_PASSWORD_HACK */
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     switch (ctx->login.state) {
+     case GET_NAME:
+@@ -584,6 +744,7 @@
+ 	(*ctx->login.notify_done) (ctx, &ctx->login.data, NOTIFY_OK);
+ 	break;
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -599,6 +760,7 @@
+     Arg	arglist[1];
+     Boolean allow;
+ 
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     XtSetArg (arglist[0], XtNallowAccess, (char *) &allow);
+     XtGetValues ((Widget) ctx, arglist, 1);
+@@ -616,6 +778,7 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     if (ctx->login.sessionArg)
+ 	XtFree (ctx->login.sessionArg);
+@@ -639,11 +802,14 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     ctx->login.state = DONE;
+     ctx->login.cursor = 0;
+     (*ctx->login.notify_done) (ctx, &ctx->login.data, NOTIFY_RESTART);
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -657,11 +823,14 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     ctx->login.state = DONE;
+     ctx->login.cursor = 0;
+     (*ctx->login.notify_done) (ctx, &ctx->login.data, NOTIFY_ABORT);
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -675,11 +844,14 @@
+ {
+     LoginWidget ctx = (LoginWidget)ctxw;
+ 
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     ctx->login.state = DONE;
+     ctx->login.cursor = 0;
+     (*ctx->login.notify_done) (ctx, &ctx->login.data, NOTIFY_ABORT_DISPLAY);
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -706,13 +878,16 @@
+     char strbuf[128];
+     int  len;
+ 
++    if (ctx->login.consoleState) return;
+     len = XLookupString (&event->xkey, strbuf, sizeof (strbuf), 0, 0);
+     strbuf[len] = '\0';
+     if (len + (int)strlen(ctx->login.data.name) >= NAME_LEN - 1)
+     	len = NAME_LEN - strlen(ctx->login.data.name) - 2;
+     if (len == 0)
+ 	return;
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
++    if (ctx->login.consoleState) return;
+     RemoveFail (ctx);
+     switch (ctx->login.state) {
+     case GET_NAME:
+@@ -732,6 +907,7 @@
+ 	ctx->login.cursor += len;
+ 	break;
+     }
++    if (ctx->login.consoleState) return;
+     XorCursor (ctx);
+ }
+ 
+@@ -821,6 +997,9 @@
+     w->login.state = GET_NAME;
+     w->login.cursor = 0;
+     w->login.failUp = 0;
++    w->login.consoleState = 0;
++    w->login.consoleTimeout = 0;
++    w->login.consolePid = 0;
+     if (w->core.width == 0)
+         w->core.width = max (max (GREET_W(w), FAIL_W(w)),
+             max (HintWidth (w, w->login.sessionHint),
+@@ -859,6 +1038,7 @@
+      Widget gw;
+ {
+     LoginWidget w = (LoginWidget)gw;
++    if (w->login.consoleTimeout) XtRemoveTimeOut(w->login.consoleTimeout);
+     bzero (w->login.data.name, NAME_LEN);
+     bzero (w->login.data.passwd, NAME_LEN);
+     XtReleaseGC(gw, w->login.textGC);
+@@ -916,6 +1096,9 @@
+ ";
+ 
+ XtActionsRec loginActionsTable [] = {
++  {"console-request", ConsoleRequest},
++  {"console-confirm", ConsoleConfirm},
++  {"console-cancel", ConsoleCancel},
+   {"delete-previous-character",	DeleteBackwardChar},
+   {"delete-character",		DeleteForwardChar},
+   {"move-backward-character",	MoveBackwardChar},
+--- LoginP.h.orig
++++ LoginP.h
+@@ -50,6 +50,10 @@
+ 	char		*passwdPrompt;	/* password prompt */
+ 	char		*sessionHint;	/* optional footer, first line */
+ 	char		*sessionHint2;	/* optional footer, second line */
++	Boolean         allowTextConsole;
++	int             consoleState;   /* 0 login, 1 confirm, 2 stopping, 3 failed */
++	XtIntervalId    consoleTimeout;
++	int             consolePid;
+ 	char		*fail;		/* failure message */
+ 	XFontStruct	*font;		/* font for text */
+ 	XFontStruct	*promptFont;	/* font for prompts */

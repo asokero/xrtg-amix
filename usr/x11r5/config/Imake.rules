@@ -107,6 +107,28 @@
  * and EXTRA comes with syslibs from the LDLIBS
  */
 
+/*
+ * NullParameter -- the empty argument.
+ *
+ * Imakefiles pass this where a rule takes an argument they have nothing to
+ * put in, e.g. in the vanilla AMIX tree:
+ *
+ *     SpecialObjectRule(miinitext.o, $(ICONFIGFILES), NullParameter)
+ *
+ * X11R5's own Imake.rules (v1.123) defines it; this file is the older
+ * v1.67, which does not, so cpp passed the word through and the generated
+ * rule read
+ *
+ *     $(CC) -c $(CFLAGS)  NullParameter $*.c
+ *
+ * which fails with "gcc: NullParameter: No such file or directory".  The
+ * breakage was latent for a long time because miinitext.o survived from an
+ * earlier build and was never remade; a `make clean` is what exposed it.
+ */
+#ifndef NullParameter
+#define NullParameter
+#endif
+
 
 
 /*

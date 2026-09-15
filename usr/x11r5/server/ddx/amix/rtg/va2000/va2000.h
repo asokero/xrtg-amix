@@ -22,6 +22,26 @@
 #define VA2000_DEV          "/dev/va2000"
 #define VA2000_MMAP_SIZE    0x200000        /* 2 MB total address space     */
 #define VA2000_FB_OFFSET    0x10000         /* framebuffer within mmap      */
+#define VA2000_MAP_SLACK    0x40000         /* 256 KB mapped past the mode  */
+
+/*
+** Driver ioctls we use.  Numbers must match va2000-amix/src/va2000.h.
+** Both return their value through the SVR4 ioctl return value (*rvalp),
+** so the call itself yields the answer:
+**
+**     size = ioctl(fd, SVGAIOCGetFBufSize, 0);
+**
+** An older driver that does not implement them returns -1 / EINVAL, which
+** is why every caller must have a fallback.
+*/
+#define VA2000_SVGAIOC          0xe300
+#define VA2000_VA2IOC           ('V' << 8)
+#ifndef SVGAIOCGetFBufSize
+#define SVGAIOCGetFBufSize      (VA2000_SVGAIOC | 0x04)
+#endif
+#ifndef VA2IOC_GETFW
+#define VA2IOC_GETFW            (VA2000_VA2IOC | 1)
+#endif
 
 /* ======================================================================= */
 /* = Video mode table                                                    = */
@@ -41,6 +61,179 @@ typedef struct _VA2000ModeRec {
 } VA2000ModeRec, *VA2000ModePtr;
 
 extern VA2000ModePtr va2000_selected_mode; /* set by -mode WxH, default 800x600 */
+
+/* ======================================================================= */
+/* = Board capabilities, probed once at InitHW                           = */
+/* ======================================================================= */
+
+/*
+** The same binary has to serve two very different machines: a stock
+** A3000UX (68030, VA2000 in Zorro II firmware, 4 MB aperture) and a
+** 68040/060 kernel with the card in Zorro III (32 MB aperture).  Rather
+** than build two servers, probe the board once and derive the defaults
+** from what is actually there.
+**
+** The aperture size is the discriminator: AutoConfig reports 4 MB for a
+** Zorro II board and 32 MB for a Zorro III one (va2000-amix/src/va2000.c).
+** -bus z2|z3 overrides the guess.
+*/
+
+#define VA2000_BUS_UNKNOWN  0
+#define VA2000_BUS_Z2       1
+#define VA2000_BUS_Z3       2
+
+/* Aperture at or above this size means the board came up in Zorro III. */
+#define VA2000_Z3_MIN_SIZE  0x800000L       /* 8 MB                         */
+
+typedef struct _VA2000CapsRec {
+    long fbSize;        /* framebuffer bytes reported by the driver, or 0    */
+    int  bus;           /* VA2000_BUS_*                                      */
+    int  busForced;     /* TRUE when -bus set it rather than the probe       */
+    int  fwVersion;     /* firmware version, or 0 if the ioctl failed        */
+} VA2000CapsRec;
+
+extern VA2000CapsRec va2000_caps;
+
+/* ======================================================================= */
+/* = Runtime feature switches                                            = */
+/* ======================================================================= */
+
+/*
+** Every optimisation added on this branch gets a bit here, so a bug report
+** from a machine we cannot test can be narrowed down with one flag:
+**
+**     Xrtg :0 -compat        every fast path off, original behaviour
+**
+** Bits are checked at the point of use, never at compile time, so both
+** target machines run the same binary and the same code paths are
+** reachable on either one.
+*/
+
+#define VA2000_OPT_GLYPH     0x0001     /* native 16-bit glyph blitter      */
+#define VA2000_OPT_COPY      0x0002     /* direct window<->pixmap CopyArea  */
+#define VA2000_OPT_PUTIMAGE  0x0004     /* native ZPixmap PutImage          */
+#define VA2000_OPT_LONGWORD  0x0008     /* 32-bit stores into VRAM          */
+#define VA2000_OPT_ASYNCBLT  0x0010     /* do not wait for blitter to finish */
+#define VA2000_OPT_TILE      0x0020     /* real tile / stipple fills        */
+#define VA2000_OPT_BSTORE    0x0040     /* backing store (memory hungry)    */
+#define VA2000_OPT_VRAMPIX   0x0080     /* pixmaps in off-screen VRAM       */
+#define VA2000_OPT_STALLWATCH 0x0100    /* time the gaps in the select loop */
+
+/*
+** Defaults.  ASYNCBLT is off because the blitter status register is not
+** fully trusted yet (see the BLITWAIT note in va2000draw.c); BSTORE is off
+** because a stock A3000UX may have only 4-8 MB and one 800x600 window costs
+** 960 KB.  Both are opt-in.
+*/
+#define VA2000_OPT_DEFAULT \
+    (VA2000_OPT_GLYPH | VA2000_OPT_COPY | VA2000_OPT_PUTIMAGE | \
+     VA2000_OPT_LONGWORD | VA2000_OPT_TILE | VA2000_OPT_VRAMPIX | \
+     VA2000_OPT_STALLWATCH)
+
+extern unsigned long va2000_options;    /* -vaopt / -compat / -bstore       */
+extern int  va2000_blit_min;            /* -blitmin: CPU below this area    */
+extern int  va2000_bus_override;        /* -bus: VA2000_BUS_* or UNKNOWN    */
+
+#define VA2000_OPT(bit)  ((va2000_options & (bit)) != 0)
+
+/*
+** Blitter/CPU crossover, in pixels of rectangle area.
+**
+** A blitFill costs ten register writes and two status polls over Zorro
+** whatever the rectangle's size, so below some area the CPU is ahead --
+** and window borders, which PaintWindow fills, are strips one to four
+** pixels wide.  The default is 0, meaning always use the blitter, because
+** the crossover has not been measured on either bus yet and a guess here
+** would be a guess in the default path.  -blitmin N sets it.
+**
+** To find it: xbench's fillrect10 / fillrect100 / fillrect300 against a
+** few values of -blitmin.
+*/
+#define VA2000_BLIT_MIN_DEFAULT  0      /* 0 = always use the blitter       */
+
+/*
+** Bounded blitter wait.
+**
+** The original loop was unbounded and a stuck blitter locked the server.
+** The first bound was set by counting pixels, which was the wrong unit: a
+** poll is a Zorro register read, not a pixel, and the blitter finishes in
+** its own time however fast we ask.  Two million polls is something like
+** half a second of spinning, which is long enough to be felt as the
+** desktop stopping.
+**
+** Sized from wall time instead.  The longest legitimate blit is a full
+** screen: 1280x720 is 921600 pixels, and the blitter fills at about
+** 44 Mpixel/s, so roughly 21 ms.  A poll is on the order of 200 ns, so
+** 500000 polls is about 100 ms -- comfortably above any real blit and
+** short enough that giving up is a hiccup rather than a stall.
+**
+** SLOW is the interesting number.  A wait that runs long and then
+** succeeds writes nothing to the log under the old scheme, so a blitter
+** that is merely slow looks exactly like one that is fine.  Waits past
+** this many polls (about 10 ms) are counted and the first few logged.
+*/
+#define VA2000_BLIT_TIMEOUT      500000L
+#define VA2000_BLIT_SLOW         50000L
+#define VA2000_BLIT_TIMEOUT_LOG  8      /* stop logging after this many     */
+
+extern long va2000_blit_slow;           /* waits longer than SLOW polls     */
+extern long va2000_blit_worst;          /* the longest wait seen, in polls  */
+
+extern long va2000_blit_timeouts;       /* count, reported at CloseScreen   */
+extern long va2000_putimage_fast;       /* PutImage calls the native path took */
+extern long va2000_putimage_slow;       /* PutImage calls that fell back to mi */
+extern long va2000_glyph_fast;          /* glyph runs drawn natively          */
+extern long va2000_glyph_slow;          /* glyph runs handed to mi            */
+extern long va2000_copy_fast;           /* pixmap CopyArea done natively      */
+extern long va2000_copy_slow;           /* pixmap CopyArea handed to mi       */
+
+/*
+** Work counters, in units of the work itself rather than of calls.
+**
+** These exist to answer one question: when the server spends seconds awake
+** in one go, was it drawing or was it somewhere else entirely?  A stretch
+** that shows near-zero of all of these was not spent in this driver, and
+** that is worth knowing before optimising any part of it.
+**
+** They are plain longs bumped without locking, which is safe here: the X
+** server is single threaded and these are read by the block handler on the
+** same thread that wrote them.
+*/
+extern long va2000_blits;               /* blitter operations issued          */
+extern long va2000_blit_polls;          /* BLITWAIT poll iterations           */
+extern long va2000_fill_hw_px;          /* fill pixels the blitter wrote      */
+extern long va2000_fill_cpu_px;         /* fill pixels the CPU wrote          */
+extern long va2000_copy_hw_px;          /* copy pixels the blitter moved      */
+extern long va2000_copy_cpu_px;         /* copy pixels the CPU moved          */
+extern long va2000_image_px;            /* of the CPU copies, PutImage's      */
+extern long va2000_glyph_px;            /* pixels written by glyph blitting   */
+extern long va2000_tile_px;             /* of the CPU copies, tiled fills'    */
+extern long va2000_tile_wide;           /* tile rows using the expanded path  */
+extern long va2000_tile_narrow;         /* tile rows using the short loop     */
+extern long va2000_tile_hit;            /* expanded rows reused from cache    */
+extern long va2000_tile_miss;           /* expanded rows built                */
+extern long va2000_paint_us;            /* microseconds inside PaintWindow    */
+extern long va2000_paint_calls;         /* PaintWindow calls timed            */
+
+/*
+** These are disjoint on purpose.  The first version counted blitter and CPU
+** work into one fill total and one copy total, which makes the -blitmin
+** question -- at what size does the blitter stop being worth its setup --
+** impossible to read off a session.  It also counted PutImage's pixels twice,
+** once as image and once again as copy, because PutImage writes through the
+** same run copier; a session reported 177 M copied of which 168 M was the
+** same 168 M reported as image.
+*/
+
+/*
+** Pixmap copy sizes, as a histogram of area in pixels.  Bucket n holds
+** copies of 2^(2n+6) pixels and up -- 0 is under 64, then 256, 1K, 4K, 16K,
+** 64K, 256K and above.  The question it answers is whether pixmap copies in
+** real use are ever large enough for the blitter to be worth its setup
+** cost, which is what off-screen VRAM pixmaps would depend on.
+*/
+#define VA2000_SZBUCKETS 8
+extern long va2000_copy_hist[VA2000_SZBUCKETS];
 
 /* Compile-time default: 800x600 — used only as fallback constants */
 #define VA2000_WIDTH        800
@@ -184,6 +377,7 @@ extern VA2000ModePtr va2000_selected_mode; /* set by -mode WxH, default 800x600 
 
 typedef struct _va2000ScreenRec {
     int             fd;         /* open file descriptor for VA2000_DEV      */
+    long            mapSize;    /* bytes mmap'd; munmap needs the same size */
     pointer         regBase;    /* mmap base (registers + framebuffer)       */
     unsigned short *fbBase;     /* pixel (0,0): regBase + VA2000_FB_OFFSET   */
 } va2000ScreenRec, *va2000ScreenPtr;
@@ -200,6 +394,9 @@ Bool    va2000Probe();
 Bool    va2000InitHW();
 void    va2000CloseHW();
 Bool    va2000SetMode();
+Bool    va2000SetBus();          /* -bus z2|z3                              */
+long    va2000ModeBytes();       /* framebuffer bytes the selected mode needs */
+char   *va2000BusName();
 
 /* va2000screen.c — screen lifecycle and GC */
 Bool    va2000ScreenInit();
@@ -231,6 +428,19 @@ void    va2000FillPolygon();
 void    va2000PolyFillRect();
 void    va2000PolyText8();
 void    va2000ImageText8();
+void    va2000FillRun();         /* va2000draw.c, used by va2000text.c      */
+void    va2000CopyRun();         /* va2000draw.c, aligned pixel copy         */
+void    va2000SaveAreas();       /* backing store, for mibstore              */
+void    va2000RestoreAreas();
+
+/* va2000text.c — native glyph drawing */
+void    va2000PolyGlyphBlt();
+void    va2000ImageGlyphBlt();
+
+/* va2000tile.c — tile and stipple fills */
+void    va2000FillTileSpans();
+void    va2000FillStipSpans();
+void    va2000TileBoxes();
 void    va2000PutImage();
 void    va2000PushPixels();
 

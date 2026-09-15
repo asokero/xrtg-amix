@@ -1,0 +1,126 @@
+#
+# .twmrc for an Xrtg session.
+#
+# Install as /root/.twmrc.
+#
+# twm looks the way it does out of the box because its defaults are from
+# 1988, not because it cannot look better.  Nothing here is a patch or an
+# extension -- it is the same window manager with its colours, fonts and
+# placement told what to do.
+#
+# The one entry that is about speed rather than looks is OpaqueMove being
+# absent: dragging a window opaquely on this display means copying it
+# through VRAM at every step.  The outline is what you want here.
+#
+# twm parses this file at startup and exits on a syntax error, taking the
+# session with it, so two things are worth knowing before editing:
+#   - every menu entry must begin with a label string, even a submenu one
+#     ("Windows" f.menu "TwmWindows", never a bare f.menu)
+#   - geometry strings go to XParseGeometry: "300x200-2-2", not "-2-2 300x200"
+
+NoGrabServer
+RestartPreviousState
+DecorateTransients
+RandomPlacement
+NoRaiseOnMove
+NoRaiseOnResize
+ConstrainedMoveTime 0
+
+BorderWidth        2
+FramePadding       2
+TitlePadding       0
+ButtonIndent       1
+TitleButtonBorderWidth 0
+
+TitleFont   "-adobe-helvetica-bold-r-normal--12-*-*-*-*-*-*-*"
+MenuFont    "-adobe-helvetica-medium-r-normal--12-*-*-*-*-*-*-*"
+IconFont    "-adobe-helvetica-medium-r-normal--10-*-*-*-*-*-*-*"
+ResizeFont  "-misc-fixed-medium-r-normal--13-*-*-*-*-*-*-*"
+IconManagerFont "-adobe-helvetica-medium-r-normal--10-*-*-*-*-*-*-*"
+
+Color
+{
+    BorderColor          "#3a4451"
+    DefaultBackground    "#1b2129"
+    DefaultForeground    "#c9d1d9"
+    TitleBackground      "#2b3440"
+    TitleForeground      "#c9d1d9"
+    MenuBackground       "#222a34"
+    MenuForeground       "#c9d1d9"
+    MenuTitleBackground  "#e8913a"
+    MenuTitleForeground  "#10161c"
+    IconBackground       "#222a34"
+    IconForeground       "#c9d1d9"
+    IconBorderColor      "#3a4451"
+    IconManagerBackground "#222a34"
+    IconManagerForeground "#c9d1d9"
+    IconManagerHighlight  "#e8913a"
+
+    # The accent colour on the focused title bar is the whole of the "3-D
+    # look" a 16-bit screen needs.
+    BorderTileBackground "#1b2129"
+}
+
+IconManagerGeometry "150x5-2+2" 1
+ShowIconManager
+
+# Placement: leave the top-right corner free for the icon manager.
+IconRegion "300x200-2-2" North East 75 20
+
+Cursors
+{
+    Frame     "left_ptr"
+    Title     "left_ptr"
+    Icon      "left_ptr"
+    IconMgr   "left_ptr"
+    Move      "fleur"
+    Resize    "sizing"
+    Menu      "sb_left_arrow"
+    Button    "hand2"
+    Wait      "watch"
+    Select    "dot"
+    Destroy   "pirate"
+}
+
+DefaultFunction f.nop
+
+Function "move-or-raise" { f.move f.deltastop f.raise }
+
+Button1 = : root    : f.menu "main"
+Button2 = : root    : f.menu "TwmWindows"
+Button3 = : root    : f.refresh
+
+Button1 = : title   : f.function "move-or-raise"
+Button2 = : title   : f.raiselower
+Button3 = : title   : f.menu "window"
+
+Button1 = : icon    : f.function "move-or-raise"
+Button2 = : icon    : f.iconify
+
+Button1 = : iconmgr : f.iconify
+Button2 = : iconmgr : f.raise
+
+menu "main"
+{
+    "Xrtg"          f.title
+    "xterm"         f.exec "xterm &"
+    "xterm (small)" f.exec "xterm -geometry 80x24 -font 6x13 &"
+    "xclock"        f.exec "xclock -geometry 100x100-2-2 &"
+    ""              f.nop
+    "Refresh"       f.refresh
+    "Restart twm"   f.restart
+    ""              f.nop
+    "Exit X"        f.quit
+}
+
+menu "window"
+{
+    "Window"        f.title
+    "Raise"         f.raise
+    "Lower"         f.lower
+    "Iconify"       f.iconify
+    "Resize"        f.resize
+    "Move"          f.move
+    ""              f.nop
+    "Kill"          f.destroy
+}

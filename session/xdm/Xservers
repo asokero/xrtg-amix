@@ -1,0 +1,6 @@
+# Xrtg local display managed by xdm.
+#
+# Keep the display at :0 so the manual startxrtg fallback and xdm use the same
+# client DISPLAY.  Xrtg survives xdm's reset cycle across server generations.
+
+:0 local /usr/bin/X11/Xrtg :0 -mode 1280x720 -pn -fp /usr/X/lib/fonts/misc/,/usr/X/lib/fonts/Speedo/,/usr/X/lib/fonts/75dpi/,/usr/X/lib/fonts/100dpi/,/usr/X/lib/fonts/Xol/

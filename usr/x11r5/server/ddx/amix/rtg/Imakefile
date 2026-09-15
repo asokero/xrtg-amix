@@ -7,7 +7,11 @@ OBJS = rtgInit.o
 SUBDIRS = va2000
 
 STD_DEFINES = ServerDefines -DRTG
-CDEBUGFLAGS = -g -O
+XCOMM No CDEBUGFLAGS override here: Server.tmpl sets it from
+XCOMM ServerCDebugFlags, which config/amix.cf defines for the whole
+XCOMM server.  This used to say -g -O, which kept the symbol table in
+XCOMM the shipped binary and, more to the point, meant these two
+XCOMM directories ignored any flag added server-wide.
    INCLUDES = -I. -I.. -I../../../include -I$(INCLUDESRC) \
               -I../../mi -I../../mfb -I$(FONTSRC)/include
 

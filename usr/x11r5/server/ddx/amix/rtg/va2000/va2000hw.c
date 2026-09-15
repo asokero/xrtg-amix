@@ -44,6 +44,16 @@ static VA2000ModeRec va2000_modes[] = {
 
 VA2000ModePtr va2000_selected_mode = &va2000_modes[1]; /* default: 800x600 */
 
+/* ======================================================================= */
+/* Runtime state shared with the rest of the driver                        */
+/* ======================================================================= */
+
+VA2000CapsRec va2000_caps = { 0L, VA2000_BUS_UNKNOWN, 0, 0 };
+
+unsigned long va2000_options      = VA2000_OPT_DEFAULT;
+int           va2000_blit_min     = VA2000_BLIT_MIN_DEFAULT;
+int           va2000_bus_override = VA2000_BUS_UNKNOWN;
+
 /*
 ** va2000SetMode — select mode by "WxH" string.
 ** Returns TRUE if found, FALSE if unrecognised (keeps current mode).
@@ -62,6 +72,90 @@ char *name;
         }
     }
     return FALSE;
+}
+
+/*
+** va2000SetBus — override bus autodetection ("z2" or "z3").
+** Returns TRUE if recognised.
+*/
+Bool
+va2000SetBus(name)
+char *name;
+{
+    if (strcmp(name, "z2") == 0)
+    {
+        va2000_bus_override = VA2000_BUS_Z2;
+        return TRUE;
+    }
+    if (strcmp(name, "z3") == 0)
+    {
+        va2000_bus_override = VA2000_BUS_Z3;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+** va2000BusName — printable name for a VA2000_BUS_* value.
+*/
+char *
+va2000BusName(bus)
+int bus;
+{
+    if (bus == VA2000_BUS_Z2)
+        return "Zorro II";
+    if (bus == VA2000_BUS_Z3)
+        return "Zorro III";
+    return "unknown";
+}
+
+/*
+** va2000ModeBytes — framebuffer bytes the selected mode occupies.
+*/
+long
+va2000ModeBytes()
+{
+    return (long) va2000_selected_mode->w *
+           (long) va2000_selected_mode->h * 2L;
+}
+
+/*
+** va2000ProbeCaps — ask the driver what board this is.
+**
+** SVGAIOCGetFBufSize returns the framebuffer size AutoConfig reported,
+** which is 4 MB on a Zorro II board and 32 MB on a Zorro III one.  An
+** older driver without these ioctls returns -1; then the aperture stays
+** unknown and the bus is left at VA2000_BUS_UNKNOWN, which every caller
+** must treat as "assume the conservative Zorro II defaults".
+*/
+static void
+va2000ProbeCaps(fd)
+int fd;
+{
+    int v;
+
+    va2000_caps.fbSize    = 0L;
+    va2000_caps.bus       = VA2000_BUS_UNKNOWN;
+    va2000_caps.busForced = 0;
+    va2000_caps.fwVersion = 0;
+
+    v = ioctl(fd, VA2IOC_GETFW, 0);
+    if (v > 0)
+        va2000_caps.fwVersion = v;
+
+    v = ioctl(fd, SVGAIOCGetFBufSize, 0);
+    if (v > 0)
+    {
+        va2000_caps.fbSize = (long) v;
+        va2000_caps.bus    = (va2000_caps.fbSize >= VA2000_Z3_MIN_SIZE)
+                             ? VA2000_BUS_Z3 : VA2000_BUS_Z2;
+    }
+
+    if (va2000_bus_override != VA2000_BUS_UNKNOWN)
+    {
+        va2000_caps.bus       = va2000_bus_override;
+        va2000_caps.busForced = 1;
+    }
 }
 
 /*
@@ -95,6 +189,11 @@ rtgScreenPtr pRTG;
     va2000ScreenPtr  pVA;
     caddr_t          base;
     int              fd;
+    long             need;
+    long             avail;
+    long             mapSize;
+    long             minSize;
+    long             wantSize;
 
     ErrorF("va2000InitHW: starting\n");
 
@@ -114,9 +213,86 @@ rtgScreenPtr pRTG;
         return FALSE;
     }
 
-    base = (caddr_t) mmap(0, VA2000_MMAP_SIZE,
+    /*
+    ** Identify the board before touching it.  Everything that differs
+    ** between a stock Zorro II A3000UX and a Zorro III machine is derived
+    ** from here, and the line below is the first thing to ask for when a
+    ** bug report arrives from a machine we cannot reach.
+    */
+    va2000ProbeCaps(fd);
+
+    ErrorF("va2000: firmware %d, framebuffer %d KB, bus %s%s\n",
+           va2000_caps.fwVersion,
+           (int)(va2000_caps.fbSize >> 10),
+           va2000BusName(va2000_caps.bus),
+           va2000_caps.busForced ? " (forced by -bus)" : "");
+    ErrorF("va2000: options 0x%04x, blitmin %d\n",
+           (int) va2000_options, va2000_blit_min);
+
+    /*
+    ** Map what the board actually has, not a fixed 2 MB.
+    **
+    ** VA2000_MMAP_SIZE was hardcoded to 2 MB, which left 1984 KB for the
+    ** framebuffer.  1280x1024 needs 2560 KB and 1920x1080 needs 4050, so
+    ** both walked off the end of the mapping in the memset below -- while
+    ** the board itself had room for them all along: AutoConfig reports a
+    ** 4 MB aperture in Zorro II and 32 MB in Zorro III.
+    **
+    ** The driver's SVGAIOCGetFBufSize says how much there is.  An older
+    ** driver that does not implement it leaves fbSize at 0, and then the
+    ** old fixed size is the safe assumption.
+    */
+    if (va2000_caps.fbSize > 0L)
+        mapSize = va2000_caps.fbSize + (long) VA2000_FB_OFFSET;
+    else
+        mapSize = (long) VA2000_MMAP_SIZE;
+
+    need  = va2000ModeBytes();
+    avail = mapSize - (long) VA2000_FB_OFFSET;
+    if (need > avail)
+    {
+        ErrorF("va2000InitHW: mode %s needs %d KB, the board offers %d KB\n",
+               va2000_selected_mode->name,
+               (int)(need >> 10), (int)(va2000_caps.fbSize >> 10));
+        (void) close(fd);
+        xfree((pointer) pVA);
+        return FALSE;
+    }
+
+    /*
+    ** Ask for the mode plus a margin, and settle for the mode.
+    **
+    ** Three sizes have been tried here.  A fixed 2 MB, which was too small
+    ** for 1280x1024 and up.  Exactly the mode, which fits every mode but
+    ** left no margin, and a drawing path that ran past the end of the
+    ** framebuffer became a bus error instead of a harmless scribble.  Then
+    ** the whole aperture, which is 32 MB on a Zorro III board and simply
+    ** does not fit: mmap returns ENOMEM and the server finds no screens.
+    **
+    ** So: the mode, plus VA2000_MAP_SLACK, capped at what the board has --
+    ** and if even that will not fit, fall back to the mode alone rather
+    ** than fail to start.  The margin is insurance, not a load-bearing
+    ** part; the overrun it used to hide was a source rectangle read above
+    ** row 0, and that one is fixed in va2000CopyRects.
+    */
+    minSize = need + (long) VA2000_FB_OFFSET;
+    wantSize = minSize + (long) VA2000_MAP_SLACK;
+    if (wantSize > mapSize)
+        wantSize = mapSize;
+
+    mapSize = wantSize;
+    base = (caddr_t) mmap(0, (size_t) mapSize,
                           PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ErrorF("va2000InitHW: base=%p\n", base);
+    if (base == (caddr_t) -1 && wantSize > minSize)
+    {
+        ErrorF("va2000InitHW: %d KB refused (%s), retrying with %d KB\n",
+               (int)(wantSize >> 10), strerror(errno), (int)(minSize >> 10));
+        mapSize = minSize;
+        base = (caddr_t) mmap(0, (size_t) mapSize,
+                              PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    }
+    ErrorF("va2000InitHW: base=%p, mapped %d KB for a %d KB mode\n",
+           base, (int)(mapSize >> 10), (int)(need >> 10));
     if (base == (caddr_t) -1)
     {
         ErrorF("va2000InitHW: mmap failed (%s)\n", strerror(errno));
@@ -162,6 +338,7 @@ rtgScreenPtr pRTG;
     VA2000_WRITEREG(base, VA2000_REG_VSYNC_END,    va2000_selected_mode->vmax);
 
     pVA->fd      = fd;
+    pVA->mapSize = mapSize;
     pVA->regBase = (pointer) base;
     pVA->fbBase  = (unsigned short *)(base + VA2000_FB_OFFSET);
 
@@ -189,6 +366,87 @@ rtgScreenPtr pRTG;
 {
     va2000ScreenPtr pVA = GetVA2000Screen(pRTG);
 
+    if (va2000_blit_timeouts || va2000_blit_slow)
+        ErrorF("va2000: blitter %d timeouts, %d slow waits, worst %d polls\n",
+               (int) va2000_blit_timeouts, (int) va2000_blit_slow,
+               (int) va2000_blit_worst);
+
+    if (va2000_putimage_fast || va2000_putimage_slow)
+        ErrorF("va2000: PutImage %d native, %d via mi\n",
+               (int) va2000_putimage_fast, (int) va2000_putimage_slow);
+
+    if (va2000_glyph_fast || va2000_glyph_slow)
+        ErrorF("va2000: glyph runs %d native, %d via mi\n",
+               (int) va2000_glyph_fast, (int) va2000_glyph_slow);
+
+    if (va2000_copy_fast || va2000_copy_slow)
+        ErrorF("va2000: pixmap CopyArea %d native, %d via mi\n",
+               (int) va2000_copy_fast, (int) va2000_copy_slow);
+
+    /*
+    ** How much work was actually done, and by which half of the card.
+    ** "blitter" is what the hardware moved; the rest the CPU wrote a word
+    ** or two at a time.  The ratio is the case for or against pushing more
+    ** through the blitter.
+    */
+    if (va2000_blits || va2000_fill_hw_px || va2000_fill_cpu_px ||
+        va2000_copy_cpu_px)
+    {
+        ErrorF("va2000: fill %d hw + %d cpu px, copy %d hw + %d cpu px, image %d px, glyph %d px\n",
+               (int) va2000_fill_hw_px, (int) va2000_fill_cpu_px,
+               (int) va2000_copy_hw_px, (int) va2000_copy_cpu_px,
+               (int) va2000_image_px, (int) va2000_glyph_px);
+
+        /*
+        ** Polls per blit is the -blitmin question in one number: it is what
+        ** the CPU spends waiting for the hardware, per operation handed to
+        ** it, and it does not depend on how big the operation was.  Set
+        ** -blitmin above the size where that wait costs more than doing the
+        ** fill directly.
+        */
+        if (va2000_paint_calls)
+            ErrorF("va2000: PaintWindow %d calls, %d ms total, %d us each\n",
+                   (int) va2000_paint_calls, (int)(va2000_paint_us / 1000L),
+                   (int)(va2000_paint_us / va2000_paint_calls));
+
+        if (va2000_tile_px)
+            ErrorF("va2000: tiled %d px, %d wide (%d cached, %d built), %d short-loop\n",
+                   (int) va2000_tile_px, (int) va2000_tile_wide,
+                   (int) va2000_tile_hit, (int) va2000_tile_miss,
+                   (int) va2000_tile_narrow);
+
+        if (va2000_blits)
+            ErrorF("va2000: %d blits, %d polls waiting, %d polls per blit, blitmin %d px\n",
+                   (int) va2000_blits, (int) va2000_blit_polls,
+                   (int)(va2000_blit_polls / va2000_blits),
+                   (int) va2000_blit_min);
+    }
+
+    /*
+    ** Pixmap copy sizes.  Off-screen VRAM pixmaps would let these go through
+    ** the blitter, but only the large ones would gain: the blitter costs ten
+    ** register writes across Zorro before it moves a pixel, which is why
+    ** -blitmin exists.  If this histogram is all in the small buckets, that
+    ** feature is not worth building.
+    */
+    {
+        int i;
+        long total = 0;
+
+        for (i = 0; i < VA2000_SZBUCKETS; i++)
+            total += va2000_copy_hist[i];
+
+        if (total)
+        {
+            ErrorF("va2000: pixmap copy sizes (px): <64:%d 64:%d 256:%d 1K:%d 4K:%d 16K:%d 64K:%d 256K+:%d\n",
+                   (int) va2000_copy_hist[0], (int) va2000_copy_hist[1],
+                   (int) va2000_copy_hist[2], (int) va2000_copy_hist[3],
+                   (int) va2000_copy_hist[4], (int) va2000_copy_hist[5],
+                   (int) va2000_copy_hist[6], (int) va2000_copy_hist[7]);
+            ErrorF("va2000: none of these used the blitter; it moves only window-to-window\n");
+        }
+    }
+
     if (!pVA)
         return;
 
@@ -210,7 +468,7 @@ rtgScreenPtr pRTG;
     VA2000_WRITEREG(pVA->regBase, VA2000_REG_SCALEMODE,    0);
     VA2000_WRITEREG(pVA->regBase, VA2000_REG_CAPTURE,      VA2000_CAPTURE_PASSTHRU);
 
-    (void) munmap(pVA->regBase, VA2000_MMAP_SIZE);
+    (void) munmap(pVA->regBase, (size_t) pVA->mapSize);
     (void) close(pVA->fd);
 
     xfree((pointer) pVA);
