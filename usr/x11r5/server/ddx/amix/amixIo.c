@@ -316,6 +316,15 @@ AbortDDX()
     int		i;
     ScreenPtr	pScreen;
 
+    /*
+    ** Monitor back to the Amiga before anything else.  A server dying here has
+    ** not reached rtgCloseScreen and will not, so this is the only chance to ask
+    ** politely; on a card whose driver switches at its last close the descriptors
+    ** closing underneath us would do it anyway, but that path is the card's and
+    ** this one is ours.  See rtg/rtgInit.c.
+    */
+    rtgAbort();
+
     for (i = 0; i < screenInfo.numScreens; i++)
     {
 	pScreen = screenInfo.screens[i];

@@ -29,6 +29,7 @@
 #include <scrnintstr.h>
 #include "mipointer.h"
 #include "mi.h"
+#include "opaque.h"      /* dispatchException, DE_TERMINATE (RT-04) */
 #include "rtg.h"
 #include "va2000/va2000.h"
 
@@ -234,6 +235,46 @@ int       on;
     return FALSE;
 }
 
+/*
+** The monitor switch (RT-04, agreed with the driver line 2026-09-28).
+**
+** WHY A dup() AND NOT pRTG->devFd ITSELF.  va2000CloseHW() closes the device at
+** EVERY server reset (rtgCloseScreen below, and the failure path in
+** rtgScreenInit).  On a driver that returns the monitor to the Amiga on its LAST
+** close -- which is what the kernel's monsw does for a card with no passthrough,
+** and what our own VA2000 driver does since ISSUE-72 -- a reset would otherwise
+** flip the monitor to native and leave it there.  With this copy open, a reset's
+** close is not the last one.  A crash or kill -9 closes everything the process
+** holds, so the driver's true last close still runs and the monitor still goes
+** back to the Amiga video with nothing here having to execute.
+**
+** Kept across server generations like amixDevsProbed, one per process.
+*/
+static int rtgSwitchFd = -1;
+
+static void
+rtgSwitch(sw)
+int sw;
+{
+    unsigned short v;
+
+    if (rtgSwitchFd < 0)
+        return;
+    v = (unsigned short) sw;
+    /* A driver without the case answers an error; that is not a failure here. */
+    (void) ioctl(rtgSwitchFd, SVGAIOCSetMonitorSwitch, &v);
+}
+
+/*
+** Monitor back to the Amiga, for AbortDDX (FatalError, GiveUp).  Safe to call
+** when no screen was ever initialised.
+*/
+void
+rtgAbort()
+{
+    rtgSwitch(SVGAMONITORSWITCH_Amiga);
+}
+
 static Bool
 rtgCloseScreen(index, pScreen)
 int       index;
@@ -258,6 +299,21 @@ ScreenPtr pScreen;
     if (rtg_stalls)
         ErrorF("va2000: %d stretches over %d ms awake, longest %d ms\n",
                (int) rtg_stalls, RTG_STALL_MS, (int) rtg_stall_worst);
+
+    /*
+    ** Only on the way out, never on a reset.  dix calls CloseScreen BEFORE it
+    ** tests dispatchException, so a reset reaches here with DE_TERMINATE clear
+    ** and must not flip the monitor -- the server is about to come straight back.
+    */
+    if (dispatchException & DE_TERMINATE)
+    {
+        rtgSwitch(SVGAMONITORSWITCH_Amiga);
+        if (rtgSwitchFd >= 0)
+        {
+            (void) close(rtgSwitchFd);
+            rtgSwitchFd = -1;
+        }
+    }
 
     va2000CloseHW(pRTG);
     xfree((pointer) pRTG);
@@ -292,6 +348,7 @@ char    **argv;
         return FALSE;
     }
     memset((char *) pRTG, 0, sizeof(rtgScreenRec));
+    pRTG->devFd = -1;           /* 0 is a valid descriptor; memset is not enough */
 
     pScreen->devPrivates[rtgScreenIndex].ptr = (pointer) pRTG;
 
@@ -331,6 +388,20 @@ char    **argv;
         xfree((pointer) pRTG);
         return FALSE;
     }
+
+    /*
+    ** The card is up and its mode is set, so ask for the RTG output.  Once per
+    ** process: the dup outlives every server generation, see rtgSwitchFd above.
+    **
+    ** On the VA2000 this is a no-op and is sent anyway.  Measured 2026-09-28:
+    ** the driver's SVGA case writes CAPTURE_MODE and that alone does not bring
+    ** the picture back -- on this card the client owns the mode and has already
+    ** painted by the time we get here.  It is still the right thing to say, and
+    ** a card whose driver CAN act on it does.
+    */
+    if (rtgSwitchFd < 0 && pRTG->devFd >= 0)
+        rtgSwitchFd = dup(pRTG->devFd);
+    rtgSwitch(SVGAMONITORSWITCH_SVGA);
 
     ErrorF("rtgScreenInit: hw init done, calling va2000ScreenInit\n");
 

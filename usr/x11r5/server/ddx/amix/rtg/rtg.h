@@ -32,7 +32,32 @@ typedef struct _rtgScreenRec {
     Bool              (*CloseScreen)(); /* chained CloseScreen                */
 
     pointer             cardPrivate;    /* card-specific private data         */
+    int                 devFd;          /* the card's device fd, -1 = none;   */
+                                        /* set by the card's InitHW (RT-04)   */
 } rtgScreenRec, *rtgScreenPtr;
+
+/*
+** The RTG monitor switch.  The device-independent layer asks the CARD's own
+** device to put the monitor on the RTG output at screen init and back on the
+** Amiga video when the server ends.  Each driver decides how: this card writes
+** its passthrough registers, a Piccolo calls its own routine, a card with no
+** passthrough drives a CIA line through the kernel's /dev/monsw.  So a new card
+** needs no change here.
+**
+** Klaus Burckert's SVGAIOC numbering, as in the VA2000 driver's va2000.h --
+** which is the de-facto RTG driver interface on this system.  A driver without
+** the case answers an error and the layer ignores it.
+**
+** Agreed with the driver line 2026-09-28 (amix-mail, kickoff-questions thread).
+*/
+#ifndef SVGAIOCSetMonitorSwitch
+#define SVGAIOC                 (0xe300)
+#define SVGAIOCSetMonitorSwitch (SVGAIOC|0x08)  /* note: 0x08, not 0x07 */
+#define SVGAMONITORSWITCH_Amiga 1
+#define SVGAMONITORSWITCH_SVGA  2
+#endif
+
+extern void rtgAbort();                 /* monitor back to Amiga, for AbortDDX */
 
 extern int rtgScreenIndex;      /* allocated by AllocateScreenPrivateIndex() */
 extern int rtgGCPrivateIndex;   /* allocated by AllocateGCPrivateIndex()     */

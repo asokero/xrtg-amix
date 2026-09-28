@@ -338,6 +338,7 @@ rtgScreenPtr pRTG;
     VA2000_WRITEREG(base, VA2000_REG_VSYNC_END,    va2000_selected_mode->vmax);
 
     pVA->fd      = fd;
+    pRTG->devFd  = fd;          /* the layer's monitor switch uses a dup of this */
     pVA->mapSize = mapSize;
     pVA->regBase = (pointer) base;
     pVA->fbBase  = (unsigned short *)(base + VA2000_FB_OFFSET);
