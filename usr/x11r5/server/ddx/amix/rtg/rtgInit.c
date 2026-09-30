@@ -266,12 +266,69 @@ int sw;
 }
 
 /*
+** rtgHandBackInput — give the console keyboard back (ISSUE-74).
+**
+** rtgOpenInput takes the input with SIOCACTIVATE and nothing ever returned it.
+** The kernel's own CloseScreen does not cover for us: its successor search
+** starts at sp->next, and for a screen that is alone in its group that is null,
+** so the loop body never runs and it falls through to `activescreen = 0`.  From
+** there the keyboard interrupt path gives up on every key -- it reads
+** activescreen, finds no screen, and returns.  The console is not slow or
+** wedged; the key never reaches a screen to be delivered to.
+**
+** SIOCBACK is HideScreen, which does what CloseScreen does not: when sp->next
+** is null it walks the whole screens[] table for any screen still in use with
+** both a kbfunc and a mifunc, and selects that one.  It acts only while we are
+** the displayed or the active screen, so calling it when we are neither is
+** harmless -- which is why it is safe on the abort path, where we may hold no
+** screen at all.
+**
+** Measured on the A3000/060 before the fix, by reading the kernel's own
+** activescreen through its relocation sites: 0x08143980 with the server up,
+** 0x00000000 for as long as no server held the screen, back to 0x08143980 once
+** the next generation ran SIOCACTIVATE.  Under xdm that gap is short because
+** the server is respawned; from a hand-started session it lasts until the
+** operator switches virtual consoles, which is the one other thing that calls
+** SelectScreen.  That workaround is why this went unnoticed for so long.
+**
+** Called before EVERY close, not only on the way out.  A reset closes the fd
+** and the next generation takes the input again, so handing it back in between
+** costs nothing; a reset that fails to come back would otherwise leave the
+** console with no screen at all.
+*/
+static void
+rtgHandBackInput(fd)
+int fd;
+{
+    int rc;
+
+    if (fd < 0)
+        return;
+    /* A kernel without the ioctl answers an error; that is not a failure here.
+    ** Logged either way: the first attempt at this fix ran no ioctl at all and
+    ** the log said nothing, which cost a rebuild to find out. */
+    rc = ioctl(fd, SIOCBACK, 0);
+    ErrorF("rtg: SIOCBACK fd=%d rc=%d%s\n", fd, rc,
+           rc ? " (errno set)" : "");
+}
+
+/*
 ** Monitor back to the Amiga, for AbortDDX (FatalError, GiveUp).  Safe to call
 ** when no screen was ever initialised.
+**
+** The keyboard goes back here too (ISSUE-74): FatalError does not run
+** CloseScreen, so without this a server that dies of an internal error leaves
+** the console unable to read the panic the operator is standing in front of.
 */
 void
 rtgAbort()
 {
+    int i;
+
+    for (i = 0; i < MAXSCREENS; i++)
+        if (amixFbs[i].fd > 0)
+            rtgHandBackInput(amixFbs[i].fd);
+
     rtgSwitch(SVGAMONITORSWITCH_Amiga);
 }
 
@@ -284,10 +341,26 @@ ScreenPtr pScreen;
     Bool         ret;
     int          i = pScreen->myNum;
 
+    /*
+    ** ISSUE-74: the keyboard goes back FIRST, while the descriptor is still
+    ** open.  The wrapped CloseScreen is amixCloseScreen, which closes
+    ** amixFbs[i].fd and then memsets the whole amixFbs[i] record
+    ** (amixInit.c).  So every line below this one that tests amixFbs[i] is
+    ** reading a zeroed record: the block further down that closes
+    ** amixFbs[i].fd has never run either, and the first version of this fix
+    ** sat there with it and did nothing.  Measured, not reasoned: with the
+    ** hand-back below the chain call, the kernel's activescreen still went to
+    ** 0 on close.
+    */
+    ErrorF("rtgCloseScreen: entered i=%d mapped=%d fd=%d\n",
+           i, (int) amixFbs[i].mapped, amixFbs[i].fd);
+    rtgHandBackInput(amixFbs[i].fd);
+
     pScreen->CloseScreen = pRTG->CloseScreen;
     ret = (*pScreen->CloseScreen)(index, pScreen);
     (*pScreen->SaveScreen)(pScreen, SCREEN_SAVER_OFF);
 
+    /* Dead since amixCloseScreen took over the close; kept as it was found. */
     if (amixFbs[i].mapped && amixFbs[i].fd >= 0)
     {
         if (CloseScreen(amixFbs[i].fd))
